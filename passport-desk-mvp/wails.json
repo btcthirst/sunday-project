@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "passport-desk-mvp",
+  "outputfilename": "passport-desk-mvp",
+  "frontend:install": "yarn install",
+  "frontend:build": "yarn build",
+  "frontend:dev:watcher": "yarn dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "btcthirst",
+    "email": "btcthirst@gmail.com"
+  }
+}
