@@ -63,6 +63,25 @@ func (d *Database) Migrate() error {
 			FOREIGN KEY (operator_id) REFERENCES operators(id)
 		)`,
 
+		// Registrations table
+		`CREATE TABLE IF NOT EXISTS registrations (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			citizen_id INTEGER NOT NULL,
+			registration_type TEXT CHECK(registration_type IN ('permanent', 'temporary')),
+			region TEXT NOT NULL,
+			district TEXT,
+			settlement TEXT NOT NULL,
+			street TEXT NOT NULL,
+			house_number TEXT NOT NULL,
+			apartment_number TEXT,
+			registration_date DATE NOT NULL,
+			deregistration_date DATE,
+			basis_document TEXT,
+			is_active BOOLEAN DEFAULT 1,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (citizen_id) REFERENCES citizens(id)
+		)`,
+
 		// Certificates table
 		`CREATE TABLE IF NOT EXISTS certificates (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

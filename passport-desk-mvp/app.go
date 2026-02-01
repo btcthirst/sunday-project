@@ -29,7 +29,8 @@ type App struct {
 	crypto   *security.Crypto
 
 	// Services
-	citizenService *services.CitizenService
+	citizenService      *services.CitizenService
+	registrationService *services.RegistrationService
 
 	// Session state
 	mu              sync.RWMutex
@@ -142,6 +143,7 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 	a.db = db
 	a.crypto = security.NewCrypto(key)
 	a.citizenService = services.NewCitizenService(db, a.crypto)
+	a.registrationService = services.NewRegistrationService(db)
 
 	// Hash password
 	passwordHash, err := security.HashPassword(password)
@@ -217,6 +219,7 @@ func (a *App) Login(username, password string) error {
 	a.encryptionKey = key
 	a.crypto = security.NewCrypto(key)
 	a.citizenService = services.NewCitizenService(db, a.crypto)
+	a.registrationService = services.NewRegistrationService(db)
 	a.currentOperator = operator
 	a.isLocked = false
 	a.lastActivity = time.Now()
@@ -257,6 +260,7 @@ func (a *App) Logout() {
 	}
 	a.crypto = nil
 	a.citizenService = nil
+	a.registrationService = nil
 	a.encryptionKey = nil
 }
 
@@ -426,4 +430,55 @@ func (a *App) ListCitizens(page, limit int) (*services.CitizenListResult, error)
 	}
 	a.UpdateActivity()
 	return a.citizenService.List(page, limit, false)
+}
+
+// --- Registration Methods ---
+
+// CreateRegistration creates a new registration
+func (a *App) CreateRegistration(input database.RegistrationInput) (*database.RegistrationOutput, error) {
+	if !a.IsAuthenticated() {
+		return nil, errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+
+	reg, err := a.registrationService.Create(&input)
+	if err == nil {
+		a.db.LogAudit(&database.AuditLog{
+			OperatorID:  a.currentOperator.ID,
+			ActionType:  "CREATE",
+			TableName:   "registrations",
+			RecordID:    reg.ID,
+			Description: fmt.Sprintf("Created registration for citizen %d", reg.CitizenID),
+		})
+	}
+	return reg, err
+}
+
+// GetRegistrationHistory returns registration history for a citizen
+func (a *App) GetRegistrationHistory(citizenID int64) ([]database.RegistrationOutput, error) {
+	if !a.IsAuthenticated() {
+		return nil, errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+	return a.registrationService.GetByCitizenID(citizenID)
+}
+
+// DeregisterCitizen deactivates a registration
+func (a *App) DeregisterCitizen(id int64, date string) error {
+	if !a.IsAuthenticated() {
+		return errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+
+	err := a.registrationService.Deregister(id, date)
+	if err == nil {
+		a.db.LogAudit(&database.AuditLog{
+			OperatorID:  a.currentOperator.ID,
+			ActionType:  "UPDATE", // Logically an update
+			TableName:   "registrations",
+			RecordID:    id,
+			Description: "Deregistered citizen",
+		})
+	}
+	return err
 }

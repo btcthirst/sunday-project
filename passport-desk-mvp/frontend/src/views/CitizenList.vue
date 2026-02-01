@@ -81,6 +81,14 @@ const columns: DataTableColumns<services.CitizenOutput> = [
     width: 150
   },
   {
+    title: 'Адреса реєстрації',
+    key: 'active_address',
+    width: 250,
+    render(row: services.CitizenOutput) {
+      return (row as any).active_address || '-'
+    }
+  },
+  {
     title: 'Паспорт',
     key: 'passport_masked',
     width: 180,

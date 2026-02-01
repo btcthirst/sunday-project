@@ -1,3 +1,74 @@
+export namespace database {
+	
+	export class RegistrationInput {
+	    citizen_id: number;
+	    registration_type: string;
+	    region: string;
+	    district: string;
+	    settlement: string;
+	    street: string;
+	    house_number: string;
+	    apartment_number: string;
+	    registration_date: string;
+	    basis_document: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RegistrationInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.citizen_id = source["citizen_id"];
+	        this.registration_type = source["registration_type"];
+	        this.region = source["region"];
+	        this.district = source["district"];
+	        this.settlement = source["settlement"];
+	        this.street = source["street"];
+	        this.house_number = source["house_number"];
+	        this.apartment_number = source["apartment_number"];
+	        this.registration_date = source["registration_date"];
+	        this.basis_document = source["basis_document"];
+	    }
+	}
+	export class RegistrationOutput {
+	    id: number;
+	    citizen_id: number;
+	    registration_type: string;
+	    region: string;
+	    district?: string;
+	    settlement: string;
+	    street: string;
+	    house_number: string;
+	    apartment_number?: string;
+	    registration_date: string;
+	    deregistration_date?: string;
+	    basis_document?: string;
+	    is_active: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RegistrationOutput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.citizen_id = source["citizen_id"];
+	        this.registration_type = source["registration_type"];
+	        this.region = source["region"];
+	        this.district = source["district"];
+	        this.settlement = source["settlement"];
+	        this.street = source["street"];
+	        this.house_number = source["house_number"];
+	        this.apartment_number = source["apartment_number"];
+	        this.registration_date = source["registration_date"];
+	        this.deregistration_date = source["deregistration_date"];
+	        this.basis_document = source["basis_document"];
+	        this.is_active = source["is_active"];
+	    }
+	}
+
+}
+
 export namespace main {
 	
 	export class OperatorInfo {
@@ -76,6 +147,7 @@ export namespace services {
 	    deleted: boolean;
 	    created_at: string;
 	    updated_at: string;
+	    active_address?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CitizenOutput(source);
@@ -103,6 +175,7 @@ export namespace services {
 	        this.deleted = source["deleted"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
+	        this.active_address = source["active_address"];
 	    }
 	}
 	export class CitizenListResult {

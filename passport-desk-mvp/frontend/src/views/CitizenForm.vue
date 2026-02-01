@@ -121,6 +121,15 @@
               </n-gi>
             </n-grid>
           </n-tab-pane>
+
+          <n-tab-pane name="registration" tab="Реєстрація" :disabled="!isEdit">
+            <n-alert v-if="!isEdit" type="info" style="margin-bottom: 16px;">
+              Збережіть громадянина, щоб додати реєстрацію
+            </n-alert>
+            <div v-else>
+               <registration-history :citizen-id="citizenId" />
+            </div>
+          </n-tab-pane>
         </n-tabs>
       </n-form>
     </n-card>
@@ -133,6 +142,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { CreateCitizen, GetCitizen, UpdateCitizen } from '../../wailsjs/go/main/App'
 import { services } from '../../wailsjs/go/models'
+import { ArrowBack } from '@vicons/ionicons5'
+import RegistrationHistory from '../components/RegistrationHistory.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -142,6 +153,10 @@ const formRef = ref()
 const saving = ref(false)
 const activeTab = ref('personal')
 const isEdit = computed(() => route.params.id !== undefined)
+const citizenId = computed(() => {
+  const id = route.params.id
+  return id ? parseInt(id as string) : 0
+})
 
 const formValue = ref(new services.CitizenInput())
 

@@ -17,11 +17,11 @@ type Citizen struct {
 	LastName       string    `json:"last_name"`
 	FirstName      string    `json:"first_name"`
 	MiddleName     string    `json:"middle_name,omitempty"`
-	BirthDate      string    `json:"birth_date"` // YYYY-MM-DD
-	PassportSeries string    `json:"passport_series"` // Encrypted
-	PassportNumber string    `json:"passport_number"` // Encrypted
+	BirthDate      string    `json:"birth_date"`           // YYYY-MM-DD
+	PassportSeries string    `json:"passport_series"`      // Encrypted
+	PassportNumber string    `json:"passport_number"`      // Encrypted
 	TaxNumber      string    `json:"tax_number,omitempty"` // IPN, Encrypted
-	Gender         string    `json:"gender"` // M or F
+	Gender         string    `json:"gender"`               // M or F
 	BirthPlace     string    `json:"birth_place,omitempty"`
 	Phone          string    `json:"phone,omitempty"` // Encrypted
 	Email          string    `json:"email,omitempty"`
@@ -29,16 +29,17 @@ type Citizen struct {
 	Deleted        bool      `json:"deleted"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	ActiveAddress  string    `json:"active_address,omitempty"` // Computed field
 }
 
 // Registration represents a citizen's address registration
 type Registration struct {
 	ID                 int64     `json:"id"`
 	CitizenID          int64     `json:"citizen_id"`
-	RegistrationType   string    `json:"registration_type"` // permanent or temporary
-	Region             string    `json:"region"` // Oblast
+	RegistrationType   string    `json:"registration_type"`  // permanent or temporary
+	Region             string    `json:"region"`             // Oblast
 	District           string    `json:"district,omitempty"` // Raion
-	Settlement         string    `json:"settlement"` // City/Village
+	Settlement         string    `json:"settlement"`         // City/Village
 	Street             string    `json:"street"`
 	HouseNumber        string    `json:"house_number"`
 	ApartmentNumber    string    `json:"apartment_number,omitempty"`
@@ -47,6 +48,37 @@ type Registration struct {
 	BasisDocument      string    `json:"basis_document,omitempty"`
 	IsActive           bool      `json:"is_active"`
 	CreatedAt          time.Time `json:"created_at"`
+}
+
+// RegistrationInput represents input for registration creation
+type RegistrationInput struct {
+	CitizenID        int64  `json:"citizen_id"`
+	RegistrationType string `json:"registration_type"`
+	Region           string `json:"region"`
+	District         string `json:"district"`
+	Settlement       string `json:"settlement"`
+	Street           string `json:"street"`
+	HouseNumber      string `json:"house_number"`
+	ApartmentNumber  string `json:"apartment_number"`
+	RegistrationDate string `json:"registration_date"`
+	BasisDocument    string `json:"basis_document"`
+}
+
+// RegistrationOutput represents output for registration
+type RegistrationOutput struct {
+	ID                 int64  `json:"id"`
+	CitizenID          int64  `json:"citizen_id"`
+	RegistrationType   string `json:"registration_type"`
+	Region             string `json:"region"`
+	District           string `json:"district,omitempty"`
+	Settlement         string `json:"settlement"`
+	Street             string `json:"street"`
+	HouseNumber        string `json:"house_number"`
+	ApartmentNumber    string `json:"apartment_number,omitempty"`
+	RegistrationDate   string `json:"registration_date"`
+	DeregistrationDate string `json:"deregistration_date,omitempty"`
+	BasisDocument      string `json:"basis_document,omitempty"`
+	IsActive           bool   `json:"is_active"`
 }
 
 // AuditLog represents an audit trail entry

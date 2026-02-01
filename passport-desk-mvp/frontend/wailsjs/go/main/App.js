@@ -6,8 +6,16 @@ export function CreateCitizen(arg1) {
   return window['go']['main']['App']['CreateCitizen'](arg1);
 }
 
+export function CreateRegistration(arg1) {
+  return window['go']['main']['App']['CreateRegistration'](arg1);
+}
+
 export function DeleteCitizen(arg1) {
   return window['go']['main']['App']['DeleteCitizen'](arg1);
+}
+
+export function DeregisterCitizen(arg1, arg2) {
+  return window['go']['main']['App']['DeregisterCitizen'](arg1, arg2);
 }
 
 export function GetCitizen(arg1) {
@@ -16,6 +24,10 @@ export function GetCitizen(arg1) {
 
 export function GetCurrentOperator() {
   return window['go']['main']['App']['GetCurrentOperator']();
+}
+
+export function GetRegistrationHistory(arg1) {
+  return window['go']['main']['App']['GetRegistrationHistory'](arg1);
 }
 
 export function IsAuthenticated() {

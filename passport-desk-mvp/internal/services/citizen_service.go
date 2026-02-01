@@ -59,6 +59,7 @@ type CitizenOutput struct {
 	Deleted         bool   `json:"deleted"`
 	CreatedAt       string `json:"created_at"`
 	UpdatedAt       string `json:"updated_at"`
+	ActiveAddress   string `json:"active_address,omitempty"`
 }
 
 // CitizenListResult contains paginated list results
@@ -114,11 +115,14 @@ func (s *CitizenService) Create(input *CitizenInput) (*CitizenOutput, error) {
 // GetByID retrieves a citizen by ID
 func (s *CitizenService) GetByID(id int64) (*CitizenOutput, error) {
 	row := s.db.DB().QueryRow(`
-		SELECT id, last_name, first_name, middle_name, birth_date,
-			passport_series, passport_number, tax_number,
-			gender, birth_place, phone, email, notes,
-			deleted, created_at, updated_at
-		FROM citizens WHERE id = ?
+		SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
+			c.passport_series, c.passport_number, c.tax_number,
+			c.gender, c.birth_place, c.phone, c.email, c.notes,
+			c.deleted, c.created_at, c.updated_at,
+			(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
+		FROM citizens c
+		LEFT JOIN registrations r ON c.id = r.citizen_id AND r.is_active = 1
+		WHERE c.id = ?
 	`, id)
 
 	return s.scanCitizen(row)
@@ -195,16 +199,18 @@ func (s *CitizenService) List(page, limit int, includeDeleted bool) (*CitizenLis
 
 	// Get items
 	query := `
-		SELECT id, last_name, first_name, middle_name, birth_date,
-			passport_series, passport_number, tax_number,
-			gender, birth_place, phone, email, notes,
-			deleted, created_at, updated_at
-		FROM citizens
+		SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
+			c.passport_series, c.passport_number, c.tax_number,
+			c.gender, c.birth_place, c.phone, c.email, c.notes,
+			c.deleted, c.created_at, c.updated_at,
+			(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
+		FROM citizens c
+		LEFT JOIN registrations r ON c.id = r.citizen_id AND r.is_active = 1
 	`
 	if !includeDeleted {
-		query += ` WHERE deleted = 0`
+		query += ` WHERE c.deleted = 0`
 	}
-	query += ` ORDER BY last_name, first_name LIMIT ? OFFSET ?`
+	query += ` ORDER BY c.last_name, c.first_name LIMIT ? OFFSET ?`
 
 	rows, err := s.db.DB().Query(query, limit, offset)
 	if err != nil {
@@ -247,29 +253,33 @@ func (s *CitizenService) Search(query string, field string) ([]CitizenOutput, er
 		// Search by name (partial match)
 		pattern := "%" + query + "%"
 		sqlQuery = `
-			SELECT id, last_name, first_name, middle_name, birth_date,
-				passport_series, passport_number, tax_number,
-				gender, birth_place, phone, email, notes,
-				deleted, created_at, updated_at
-			FROM citizens
-			WHERE deleted = 0 AND (
-				last_name LIKE ? OR first_name LIKE ? OR middle_name LIKE ?
-				OR (last_name || ' ' || first_name || ' ' || middle_name) LIKE ?
+			SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
+				c.passport_series, c.passport_number, c.tax_number,
+				c.gender, c.birth_place, c.phone, c.email, c.notes,
+				c.deleted, c.created_at, c.updated_at,
+				(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
+			FROM citizens c
+			LEFT JOIN registrations r ON c.id = r.citizen_id AND r.is_active = 1
+			WHERE c.deleted = 0 AND (
+				c.last_name LIKE ? OR c.first_name LIKE ? OR c.middle_name LIKE ?
+				OR (c.last_name || ' ' || c.first_name || ' ' || c.middle_name) LIKE ?
 			)
-			ORDER BY last_name, first_name
+			ORDER BY c.last_name, c.first_name
 			LIMIT 50
 		`
 		args = []interface{}{pattern, pattern, pattern, pattern}
 
 	case "birth_date":
 		sqlQuery = `
-			SELECT id, last_name, first_name, middle_name, birth_date,
-				passport_series, passport_number, tax_number,
-				gender, birth_place, phone, email, notes,
-				deleted, created_at, updated_at
-			FROM citizens
-			WHERE deleted = 0 AND birth_date = ?
-			ORDER BY last_name, first_name
+			SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
+				c.passport_series, c.passport_number, c.tax_number,
+				c.gender, c.birth_place, c.phone, c.email, c.notes,
+				c.deleted, c.created_at, c.updated_at,
+				(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
+			FROM citizens c
+			LEFT JOIN registrations r ON c.id = r.citizen_id AND r.is_active = 1
+			WHERE c.deleted = 0 AND c.birth_date = ?
+			ORDER BY c.last_name, c.first_name
 			LIMIT 50
 		`
 		args = []interface{}{query}
@@ -305,11 +315,14 @@ func (s *CitizenService) Search(query string, field string) ([]CitizenOutput, er
 func (s *CitizenService) searchEncryptedField(query string, field string) ([]CitizenOutput, error) {
 	// Get all non-deleted citizens
 	rows, err := s.db.DB().Query(`
-		SELECT id, last_name, first_name, middle_name, birth_date,
-			passport_series, passport_number, tax_number,
-			gender, birth_place, phone, email, notes,
-			deleted, created_at, updated_at
-		FROM citizens WHERE deleted = 0
+		SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
+			c.passport_series, c.passport_number, c.tax_number,
+			c.gender, c.birth_place, c.phone, c.email, c.notes,
+			c.deleted, c.created_at, c.updated_at,
+			(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
+		FROM citizens c
+		LEFT JOIN registrations r ON c.id = r.citizen_id AND r.is_active = 1
+		WHERE c.deleted = 0
 	`)
 	if err != nil {
 		return nil, err
@@ -362,12 +375,13 @@ func (s *CitizenService) scanCitizenFromScanner(sc scanner) (*CitizenOutput, err
 	var c CitizenOutput
 	var encPassportSeries, encPassportNumber, encTaxNumber, encPhone string
 	var createdAt, updatedAt time.Time
+	var activeAddress sql.NullString
 
 	err := sc.Scan(
 		&c.ID, &c.LastName, &c.FirstName, &c.MiddleName, &c.BirthDate,
 		&encPassportSeries, &encPassportNumber, &encTaxNumber,
 		&c.Gender, &c.BirthPlace, &encPhone, &c.Email, &c.Notes,
-		&c.Deleted, &createdAt, &updatedAt,
+		&c.Deleted, &createdAt, &updatedAt, &activeAddress,
 	)
 	if err != nil {
 		return nil, err
@@ -378,6 +392,10 @@ func (s *CitizenService) scanCitizenFromScanner(sc scanner) (*CitizenOutput, err
 	c.PassportNumber, _ = s.crypto.Decrypt(encPassportNumber)
 	c.TaxNumber, _ = s.crypto.Decrypt(encTaxNumber)
 	c.Phone, _ = s.crypto.Decrypt(encPhone)
+
+	if activeAddress.Valid {
+		c.ActiveAddress = activeAddress.String
+	}
 
 	// Computed fields
 	c.FullName = strings.TrimSpace(c.LastName + " " + c.FirstName + " " + c.MiddleName)
