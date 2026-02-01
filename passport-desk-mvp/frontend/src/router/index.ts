@@ -55,7 +55,7 @@ const routes: RouteRecordRaw[] = [
             {
                 path: 'audit',
                 name: 'Audit',
-                component: Placeholder
+                component: () => import('../views/AuditLogs.vue')
             }
         ]
     }

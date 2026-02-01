@@ -72,7 +72,17 @@
 
           <n-tab-pane name="documents" tab="Документи">
             <n-grid :x-gap="24" :y-gap="24" :cols="2">
-              <n-gi>
+              <n-gi :span="2">
+                <n-form-item label="Зразок паспорта" path="passport_type">
+                  <n-radio-group v-model:value="formValue.passport_type" name="passport_type">
+                    <n-space>
+                      <n-radio value="old">Старий зразок (книжечка)</n-radio>
+                      <n-radio value="new">Новий зразок (ID-картка)</n-radio>
+                    </n-space>
+                  </n-radio-group>
+                </n-form-item>
+              </n-gi>
+              <n-gi v-if="formValue.passport_type === 'old'">
                 <n-form-item label="Серія паспорта" path="passport_series">
                   <n-input 
                     v-model:value="formValue.passport_series" 
@@ -83,8 +93,12 @@
                 </n-form-item>
               </n-gi>
               <n-gi>
-                <n-form-item label="Номер паспорта" path="passport_number">
-                  <n-input v-model:value="formValue.passport_number" placeholder="123456" maxlength="6" />
+                <n-form-item :label="formValue.passport_type === 'new' ? 'Номер ID-картки' : 'Номер паспорта'" path="passport_number">
+                  <n-input 
+                    v-model:value="formValue.passport_number" 
+                    :placeholder="formValue.passport_type === 'new' ? '123456789' : '123456'" 
+                    :maxlength="formValue.passport_type === 'new' ? 9 : 6" 
+                  />
                 </n-form-item>
               </n-gi>
               <n-gi>
@@ -175,6 +189,7 @@ const formValue = ref(new services.CitizenInput())
 
 // Initialize defaults
 formValue.value.gender = 'M'
+formValue.value.passport_type = 'old'
 
 const genderOptions = [
   { label: 'Чоловік', value: 'M' },
@@ -190,7 +205,8 @@ const rules = {
     message: 'Введіть серію', 
     trigger: 'blur',
     validator: (_: any, value: string) => {
-      return /^[A-ZА-ЯІЇЄ]{2}$/.test(value) || new Error('2 літери')
+      if (formValue.value.passport_type === 'new') return true
+      return /^[A-ZА-ЯІЇЄ]{2}$/.test(value || '') || new Error('2 літери')
     }
   },
   passport_number: { 
@@ -198,7 +214,11 @@ const rules = {
     message: 'Введіть номер', 
     trigger: 'blur',
     validator: (_: any, value: string) => {
-      return /^\d{6}$/.test(value) || new Error('6 цифр')
+      const val = value || ''
+      if (formValue.value.passport_type === 'new') {
+        return /^\d{9}$/.test(val) || new Error('9 цифр')
+      }
+      return /^\d{6}$/.test(val) || new Error('6 цифр')
     }
   },
   tax_number: {
@@ -246,6 +266,7 @@ onMounted(async () => {
         birth_date: birthDate,
         passport_series: citizen.passport_series,
         passport_number: citizen.passport_number,
+        passport_type: citizen.passport_type || 'old',
         tax_number: citizen.tax_number,
         gender: citizen.gender,
         birth_place: citizen.birth_place,

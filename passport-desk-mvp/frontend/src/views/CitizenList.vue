@@ -9,6 +9,7 @@
           placeholder="Пошук за ПІБ, паспортом або ІПН"
           class="search-input"
           clearable
+          @update:value="handleSearchUpdate"
           @keydown.enter="handleSearch"
         >
           <template #prefix>
@@ -60,6 +61,18 @@ const dialog = useDialog()
 const citizens = ref<services.CitizenOutput[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
+let searchTimeout: number | null = null
+
+function formatDate(dateStr: string) {
+  if (!dateStr) return '-'
+  try {
+    const date = new Date(dateStr)
+    if (isNaN(date.getTime())) return dateStr
+    return date.toLocaleDateString('uk-UA')
+  } catch {
+    return dateStr
+  }
+}
 
 const pagination = reactive({
   page: 1,
@@ -78,7 +91,10 @@ const columns: DataTableColumns<services.CitizenOutput> = [
   {
     title: 'Дата народження',
     key: 'birth_date',
-    width: 150
+    width: 150,
+    render(row) {
+      return formatDate(row.birth_date)
+    }
   },
   {
     title: 'Адреса реєстрації',
@@ -175,6 +191,23 @@ function handlePageChange(page: number) {
 function handleSearch() {
   pagination.page = 1
   loadData(1)
+}
+
+function handleSearchUpdate(value: string) {
+  if (searchTimeout) {
+    clearTimeout(searchTimeout)
+  }
+  
+  if (value === '') {
+    handleSearch()
+    return
+  }
+
+  if (value.length >= 3) {
+    searchTimeout = window.setTimeout(() => {
+      handleSearch()
+    }, 500)
+  }
 }
 
 function handleDelete(row: services.CitizenOutput) {

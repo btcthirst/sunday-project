@@ -358,7 +358,18 @@ func (a *App) GetCitizen(id int64) (*services.CitizenOutput, error) {
 		return nil, errors.New("unauthorized")
 	}
 	a.UpdateActivity()
-	return a.citizenService.GetByID(id)
+
+	citizen, err := a.citizenService.GetByID(id)
+	if err == nil {
+		a.db.LogAudit(&database.AuditLog{
+			OperatorID:  a.currentOperator.ID,
+			ActionType:  "READ",
+			TableName:   "citizens",
+			RecordID:    id,
+			Description: fmt.Sprintf("Viewed citizen: %s", citizen.FullName),
+		})
+	}
+	return citizen, err
 }
 
 // UpdateCitizen updates a citizen
@@ -436,6 +447,15 @@ func (a *App) ListCitizens(page, limit int) (*services.CitizenListResult, error)
 		return nil, errors.New("unauthorized")
 	}
 	a.UpdateActivity()
+
+	// Log batch read
+	a.db.LogAudit(&database.AuditLog{
+		OperatorID:  a.currentOperator.ID,
+		ActionType:  "READ",
+		TableName:   "citizens",
+		Description: fmt.Sprintf("Listed citizens page %d, limit %d", page, limit),
+	})
+
 	return a.citizenService.List(page, limit, false)
 }
 
@@ -599,4 +619,16 @@ func (a *App) GetDashboardStats() (*services.StatsOutput, error) {
 	}
 	a.UpdateActivity()
 	return a.reportService.GetStats()
+}
+
+// GetAuditLogs returns recent audit logs
+func (a *App) GetAuditLogs(limit int) ([]database.AuditLogOutput, error) {
+	if !a.IsAuthenticated() {
+		return nil, errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	return a.db.GetAuditLogs(limit)
 }

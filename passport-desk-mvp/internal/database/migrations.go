@@ -108,5 +108,12 @@ func (d *Database) Migrate() error {
 		}
 	}
 
+	// Add passport_type if not exists for existing databases
+	var count int
+	err := d.db.QueryRow("SELECT count(*) FROM pragma_table_info('citizens') WHERE name='passport_type'").Scan(&count)
+	if err == nil && count == 0 {
+		d.db.Exec("ALTER TABLE citizens ADD COLUMN passport_type TEXT DEFAULT 'old'")
+	}
+
 	return nil
 }

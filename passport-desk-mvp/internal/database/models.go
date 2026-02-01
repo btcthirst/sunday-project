@@ -20,6 +20,7 @@ type Citizen struct {
 	BirthDate      string    `json:"birth_date"`           // YYYY-MM-DD
 	PassportSeries string    `json:"passport_series"`      // Encrypted
 	PassportNumber string    `json:"passport_number"`      // Encrypted
+	PassportType   string    `json:"passport_type"`        // 'old' or 'new'
 	TaxNumber      string    `json:"tax_number,omitempty"` // IPN, Encrypted
 	Gender         string    `json:"gender"`               // M or F
 	BirthPlace     string    `json:"birth_place,omitempty"`
@@ -90,6 +91,12 @@ type AuditLog struct {
 	TableName   string    `json:"table_name"`
 	RecordID    int64     `json:"record_id,omitempty"`
 	Description string    `json:"description,omitempty"`
+}
+
+// AuditLogOutput includes operator name for display
+type AuditLogOutput struct {
+	AuditLog
+	OperatorName string `json:"operator_name"`
 }
 
 // Certificate represents an issued certificate

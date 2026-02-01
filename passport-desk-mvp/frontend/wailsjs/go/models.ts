@@ -1,5 +1,50 @@
 export namespace database {
 	
+	export class AuditLogOutput {
+	    id: number;
+	    // Go type: time
+	    timestamp: any;
+	    operator_id: number;
+	    action_type: string;
+	    table_name: string;
+	    record_id?: number;
+	    description?: string;
+	    operator_name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AuditLogOutput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.timestamp = this.convertValues(source["timestamp"], null);
+	        this.operator_id = source["operator_id"];
+	        this.action_type = source["action_type"];
+	        this.table_name = source["table_name"];
+	        this.record_id = source["record_id"];
+	        this.description = source["description"];
+	        this.operator_name = source["operator_name"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class RegistrationInput {
 	    citizen_id: number;
 	    registration_type: string;
@@ -99,6 +144,7 @@ export namespace services {
 	    birth_date: string;
 	    passport_series: string;
 	    passport_number: string;
+	    passport_type: string;
 	    tax_number: string;
 	    gender: string;
 	    birth_place: string;
@@ -118,6 +164,7 @@ export namespace services {
 	        this.birth_date = source["birth_date"];
 	        this.passport_series = source["passport_series"];
 	        this.passport_number = source["passport_number"];
+	        this.passport_type = source["passport_type"];
 	        this.tax_number = source["tax_number"];
 	        this.gender = source["gender"];
 	        this.birth_place = source["birth_place"];
@@ -135,6 +182,7 @@ export namespace services {
 	    birth_date: string;
 	    passport_series: string;
 	    passport_number: string;
+	    passport_type: string;
 	    passport_masked: string;
 	    tax_number: string;
 	    tax_number_masked: string;
@@ -163,6 +211,7 @@ export namespace services {
 	        this.birth_date = source["birth_date"];
 	        this.passport_series = source["passport_series"];
 	        this.passport_number = source["passport_number"];
+	        this.passport_type = source["passport_type"];
 	        this.passport_masked = source["passport_masked"];
 	        this.tax_number = source["tax_number"];
 	        this.tax_number_masked = source["tax_number_masked"];

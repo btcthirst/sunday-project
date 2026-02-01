@@ -100,3 +100,34 @@ func (d *Database) LogAudit(log *AuditLog) error {
 	)
 	return err
 }
+
+// GetAuditLogs retrieves recent audit logs
+func (d *Database) GetAuditLogs(limit int) ([]AuditLogOutput, error) {
+	rows, err := d.db.Query(`
+		SELECT a.id, a.timestamp, a.operator_id, a.action_type, a.table_name, a.record_id, a.description, o.full_name
+		FROM audit_log a
+		LEFT JOIN operators o ON a.operator_id = o.id
+		ORDER BY a.timestamp DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []AuditLogOutput
+	for rows.Next() {
+		var l AuditLogOutput
+		var opName sql.NullString
+		err := rows.Scan(&l.ID, &l.Timestamp, &l.OperatorID, &l.ActionType, &l.TableName, &l.RecordID, &l.Description, &opName)
+		if err != nil {
+			return nil, err
+		}
+		if opName.Valid {
+			l.OperatorName = opName.String
+		} else {
+			l.OperatorName = "Unknown"
+		}
+		logs = append(logs, l)
+	}
+	return logs, nil
+}

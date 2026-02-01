@@ -26,6 +26,10 @@ export function GenerateCertificate(arg1) {
   return window['go']['main']['App']['GenerateCertificate'](arg1);
 }
 
+export function GetAuditLogs(arg1) {
+  return window['go']['main']['App']['GetAuditLogs'](arg1);
+}
+
 export function GetCitizen(arg1) {
   return window['go']['main']['App']['GetCitizen'](arg1);
 }

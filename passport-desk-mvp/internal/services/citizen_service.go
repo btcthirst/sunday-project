@@ -29,6 +29,7 @@ type CitizenInput struct {
 	BirthDate      string `json:"birth_date"` // YYYY-MM-DD
 	PassportSeries string `json:"passport_series"`
 	PassportNumber string `json:"passport_number"`
+	PassportType   string `json:"passport_type"`
 	TaxNumber      string `json:"tax_number"`
 	Gender         string `json:"gender"` // M or F
 	BirthPlace     string `json:"birth_place"`
@@ -47,6 +48,7 @@ type CitizenOutput struct {
 	BirthDate       string `json:"birth_date"`
 	PassportSeries  string `json:"passport_series"`
 	PassportNumber  string `json:"passport_number"`
+	PassportType    string `json:"passport_type"`
 	PassportMasked  string `json:"passport_masked"` // For display
 	TaxNumber       string `json:"tax_number"`
 	TaxNumberMasked string `json:"tax_number_masked"` // For display
@@ -97,11 +99,11 @@ func (s *CitizenService) Create(input *CitizenInput) (*CitizenOutput, error) {
 	result, err := s.db.DB().Exec(`
 		INSERT INTO citizens (
 			last_name, first_name, middle_name, birth_date,
-			passport_series, passport_number, tax_number,
+			passport_series, passport_number, passport_type, tax_number,
 			gender, birth_place, phone, email, notes
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, input.LastName, input.FirstName, input.MiddleName, input.BirthDate,
-		encPassportSeries, encPassportNumber, encTaxNumber,
+		encPassportSeries, encPassportNumber, input.PassportType, encTaxNumber,
 		input.Gender, input.BirthPlace, encPhone, input.Email, input.Notes)
 
 	if err != nil {
@@ -116,7 +118,7 @@ func (s *CitizenService) Create(input *CitizenInput) (*CitizenOutput, error) {
 func (s *CitizenService) GetByID(id int64) (*CitizenOutput, error) {
 	row := s.db.DB().QueryRow(`
 		SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
-			c.passport_series, c.passport_number, c.tax_number,
+			c.passport_series, c.passport_number, c.passport_type, c.tax_number,
 			c.gender, c.birth_place, c.phone, c.email, c.notes,
 			c.deleted, c.created_at, c.updated_at,
 			(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
@@ -154,12 +156,12 @@ func (s *CitizenService) Update(id int64, input *CitizenInput) error {
 	_, err = s.db.DB().Exec(`
 		UPDATE citizens SET
 			last_name = ?, first_name = ?, middle_name = ?, birth_date = ?,
-			passport_series = ?, passport_number = ?, tax_number = ?,
+			passport_series = ?, passport_number = ?, passport_type = ?, tax_number = ?,
 			gender = ?, birth_place = ?, phone = ?, email = ?, notes = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, input.LastName, input.FirstName, input.MiddleName, input.BirthDate,
-		encPassportSeries, encPassportNumber, encTaxNumber,
+		encPassportSeries, encPassportNumber, input.PassportType, encTaxNumber,
 		input.Gender, input.BirthPlace, encPhone, input.Email, input.Notes, id)
 
 	return err
@@ -200,7 +202,7 @@ func (s *CitizenService) List(page, limit int, includeDeleted bool) (*CitizenLis
 	// Get items
 	query := `
 		SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
-			c.passport_series, c.passport_number, c.tax_number,
+			c.passport_series, c.passport_number, c.passport_type, c.tax_number,
 			c.gender, c.birth_place, c.phone, c.email, c.notes,
 			c.deleted, c.created_at, c.updated_at,
 			(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
@@ -254,7 +256,7 @@ func (s *CitizenService) Search(query string, field string) ([]CitizenOutput, er
 		pattern := "%" + query + "%"
 		sqlQuery = `
 			SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
-				c.passport_series, c.passport_number, c.tax_number,
+				c.passport_series, c.passport_number, c.passport_type, c.tax_number,
 				c.gender, c.birth_place, c.phone, c.email, c.notes,
 				c.deleted, c.created_at, c.updated_at,
 				(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
@@ -272,7 +274,7 @@ func (s *CitizenService) Search(query string, field string) ([]CitizenOutput, er
 	case "birth_date":
 		sqlQuery = `
 			SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
-				c.passport_series, c.passport_number, c.tax_number,
+				c.passport_series, c.passport_number, c.passport_type, c.tax_number,
 				c.gender, c.birth_place, c.phone, c.email, c.notes,
 				c.deleted, c.created_at, c.updated_at,
 				(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
@@ -316,7 +318,7 @@ func (s *CitizenService) searchEncryptedField(query string, field string) ([]Cit
 	// Get all non-deleted citizens
 	rows, err := s.db.DB().Query(`
 		SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
-			c.passport_series, c.passport_number, c.tax_number,
+			c.passport_series, c.passport_number, c.passport_type, c.tax_number,
 			c.gender, c.birth_place, c.phone, c.email, c.notes,
 			c.deleted, c.created_at, c.updated_at,
 			(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
@@ -379,7 +381,7 @@ func (s *CitizenService) scanCitizenFromScanner(sc scanner) (*CitizenOutput, err
 
 	err := sc.Scan(
 		&c.ID, &c.LastName, &c.FirstName, &c.MiddleName, &c.BirthDate,
-		&encPassportSeries, &encPassportNumber, &encTaxNumber,
+		&encPassportSeries, &encPassportNumber, &c.PassportType, &encTaxNumber,
 		&c.Gender, &c.BirthPlace, &encPhone, &c.Email, &c.Notes,
 		&c.Deleted, &createdAt, &updatedAt, &activeAddress,
 	)
