@@ -12,9 +12,15 @@ export function DeleteCitizen(arg1:number):Promise<void>;
 
 export function DeregisterCitizen(arg1:number,arg2:string):Promise<void>;
 
+export function ExportCitizens(arg1:string,arg2:string):Promise<string>;
+
+export function GenerateCertificate(arg1:number):Promise<string>;
+
 export function GetCitizen(arg1:number):Promise<services.CitizenOutput>;
 
 export function GetCurrentOperator():Promise<main.OperatorInfo>;
+
+export function GetDashboardStats():Promise<services.StatsOutput>;
 
 export function GetRegistrationHistory(arg1:number):Promise<Array<database.RegistrationOutput>>;
 

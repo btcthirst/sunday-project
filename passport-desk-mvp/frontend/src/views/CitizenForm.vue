@@ -127,6 +127,19 @@
               Збережіть громадянина, щоб додати реєстрацію
             </n-alert>
             <div v-else>
+               <n-space justify="space-between" align="center" style="margin-bottom: 16px">
+                 <n-button @click="printCertificate" :loading="printing">
+                   <template #icon>
+                     <n-icon>
+                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                         <path d="M19 8h-1V3H6v5H5c-1.66 0-3 1.34-3 3v6h3v4h14v-4h3v-6c0-1.66-1.34-3-3-3zM8 5h8v3H8V5zm8 12v2H8v-4h8v2zm2-2v-2H6v2H4v-4c0-.55.45-1 1-1h14c.55 0 1 .45 1 1v4h-2z"/>
+                         <path d="M18 11.5c.28 0 .5-.22.5-.5s-.22-.5-.5-.5-.5.22-.5.5.22.5.5.5z"/>
+                       </svg>
+                     </n-icon>
+                   </template>
+                   Друк довідки (Зберегти)
+                 </n-button>
+               </n-space>
                <registration-history :citizen-id="citizenId" />
             </div>
           </n-tab-pane>
@@ -140,7 +153,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { CreateCitizen, GetCitizen, UpdateCitizen } from '../../wailsjs/go/main/App'
+import { CreateCitizen, GetCitizen, UpdateCitizen, GenerateCertificate } from '../../wailsjs/go/main/App'
 import { services } from '../../wailsjs/go/models'
 import { ArrowBack } from '@vicons/ionicons5'
 import RegistrationHistory from '../components/RegistrationHistory.vue'
@@ -273,6 +286,25 @@ async function handleSave() {
     message.error('Помилка збереження: ' + e.toString())
   } finally {
     saving.value = false
+  }
+}
+
+const printing = ref(false)
+
+async function printCertificate() {
+  printing.value = true
+  try {
+    const path = await GenerateCertificate(citizenId.value)
+    if (path === 'cancelled') {
+        message.info('Збереження скасовано')
+    } else {
+        message.success('Довідку збережено: ' + path)
+    }
+  } catch (err: any) {
+    const msg = err.message || err.toString()
+    message.error('Неможливо сформувати довідку: ' + msg)
+  } finally {
+    printing.value = false
   }
 }
 </script>

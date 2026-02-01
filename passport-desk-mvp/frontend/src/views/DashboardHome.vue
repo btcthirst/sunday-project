@@ -34,7 +34,7 @@
       </n-gi>
       <n-gi>
         <n-card class="stat-card">
-          <n-statistic label="Видано довідок" :value="stats.certificates">
+          <n-statistic label="Нових цього місяця" :value="stats.certificates">
             <template #prefix>
               <n-icon color="#f0a020">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
@@ -87,7 +87,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { GetCurrentOperator } from '../../wailsjs/go/main/App'
+import { GetCurrentOperator, GetDashboardStats } from '../../wailsjs/go/main/App'
 
 const router = useRouter()
 const operatorName = ref('')
@@ -97,6 +97,15 @@ onMounted(async () => {
   try {
     const op = await GetCurrentOperator()
     operatorName.value = op.full_name
+
+    const s = await GetDashboardStats()
+    if (s) {
+      stats.value = {
+        citizens: s.total_citizens,
+        registrations: s.active_registrations,
+        certificates: s.new_this_month // Using 'New this month' as 3rd metric for now
+      }
+    }
   } catch (e) {
     console.error(e)
   }

@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"passport-desk-mvp/internal/database"
 	"passport-desk-mvp/internal/security"
@@ -31,6 +34,7 @@ type App struct {
 	// Services
 	citizenService      *services.CitizenService
 	registrationService *services.RegistrationService
+	reportService       *services.ReportService
 
 	// Session state
 	mu              sync.RWMutex
@@ -144,6 +148,7 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 	a.crypto = security.NewCrypto(key)
 	a.citizenService = services.NewCitizenService(db, a.crypto)
 	a.registrationService = services.NewRegistrationService(db)
+	a.reportService = services.NewReportService(db, a.citizenService, a.registrationService)
 
 	// Hash password
 	passwordHash, err := security.HashPassword(password)
@@ -220,6 +225,7 @@ func (a *App) Login(username, password string) error {
 	a.crypto = security.NewCrypto(key)
 	a.citizenService = services.NewCitizenService(db, a.crypto)
 	a.registrationService = services.NewRegistrationService(db)
+	a.reportService = services.NewReportService(db, a.citizenService, a.registrationService)
 	a.currentOperator = operator
 	a.isLocked = false
 	a.lastActivity = time.Now()
@@ -261,6 +267,7 @@ func (a *App) Logout() {
 	a.crypto = nil
 	a.citizenService = nil
 	a.registrationService = nil
+	a.reportService = nil
 	a.encryptionKey = nil
 }
 
@@ -481,4 +488,115 @@ func (a *App) DeregisterCitizen(id int64, date string) error {
 		})
 	}
 	return err
+}
+
+// --- Report Methods ---
+
+// GenerateCertificate generates a registration certificate for a citizen and saves it
+func (a *App) GenerateCertificate(citizenID int64) (string, error) {
+	if !a.IsAuthenticated() {
+		return "", errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+
+	// Ask user where to save
+	filename := fmt.Sprintf("certificate_%d_%s.pdf", citizenID, time.Now().Format("20060102"))
+	filepath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Зберегти довідку",
+		DefaultFilename: filename,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "PDF Files (*.pdf)", Pattern: "*.pdf"},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if filepath == "" {
+		return "cancelled", nil
+	}
+
+	// Create audit log
+	a.db.LogAudit(&database.AuditLog{
+		OperatorID:  a.currentOperator.ID,
+		ActionType:  "READ",
+		TableName:   "registrations",
+		RecordID:    citizenID,
+		Description: fmt.Sprintf("Generated certificate for citizen %d", citizenID),
+	})
+
+	base64Data, err := a.reportService.GenerateRegistrationCertificate(citizenID)
+	if err != nil {
+		return "", err
+	}
+
+	// Decode PDF
+	pdfBytes, err := base64.StdEncoding.DecodeString(base64Data)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode PDF: %w", err)
+	}
+
+	// Save to selected file
+	if err := os.WriteFile(filepath, pdfBytes, 0644); err != nil {
+		return "", fmt.Errorf("failed to save file: %w", err)
+	}
+
+	return filepath, nil
+}
+
+// ExportCitizens exports registered citizens to Excel and saves it
+func (a *App) ExportCitizens(from, to string) (string, error) {
+	if !a.IsAuthenticated() {
+		return "", errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+
+	// Ask user where to save
+	filename := fmt.Sprintf("registrations_%s.xlsx", time.Now().Format("20060102"))
+	filepath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Зберегти звіт",
+		DefaultFilename: filename,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Excel Files (*.xlsx)", Pattern: "*.xlsx"},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if filepath == "" {
+		return "cancelled", nil // User cancelled
+	}
+
+	a.db.LogAudit(&database.AuditLog{
+		OperatorID:  a.currentOperator.ID,
+		ActionType:  "READ",
+		TableName:   "registrations",
+		Description: fmt.Sprintf("Exported citizens list from %s to %s", from, to),
+	})
+
+	base64Data, err := a.reportService.ExportRegisteredCitizens(from, to)
+	if err != nil {
+		return "", err
+	}
+
+	// Decode Excel
+	xlsxBytes, err := base64.StdEncoding.DecodeString(base64Data)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode Excel: %w", err)
+	}
+
+	// Save file
+	if err := os.WriteFile(filepath, xlsxBytes, 0644); err != nil {
+		return "", fmt.Errorf("failed to save file: %w", err)
+	}
+
+	return filepath, nil
+}
+
+// GetDashboardStats returns dashboard statistics
+func (a *App) GetDashboardStats() (*services.StatsOutput, error) {
+	if !a.IsAuthenticated() {
+		return nil, errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+	return a.reportService.GetStats()
 }

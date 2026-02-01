@@ -216,6 +216,25 @@ export namespace services {
 		    return a;
 		}
 	}
+	
+	export class StatsOutput {
+	    total_citizens: number;
+	    total_registrations: number;
+	    active_registrations: number;
+	    new_this_month: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new StatsOutput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.total_citizens = source["total_citizens"];
+	        this.total_registrations = source["total_registrations"];
+	        this.active_registrations = source["active_registrations"];
+	        this.new_this_month = source["new_this_month"];
+	    }
+	}
 
 }
 

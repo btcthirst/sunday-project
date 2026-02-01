@@ -50,7 +50,7 @@ const routes: RouteRecordRaw[] = [
             {
                 path: 'reports',
                 name: 'Reports',
-                component: Placeholder
+                component: () => import('../views/Reports.vue')
             },
             {
                 path: 'audit',

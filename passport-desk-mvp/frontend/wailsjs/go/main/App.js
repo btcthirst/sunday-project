@@ -18,12 +18,24 @@ export function DeregisterCitizen(arg1, arg2) {
   return window['go']['main']['App']['DeregisterCitizen'](arg1, arg2);
 }
 
+export function ExportCitizens(arg1, arg2) {
+  return window['go']['main']['App']['ExportCitizens'](arg1, arg2);
+}
+
+export function GenerateCertificate(arg1) {
+  return window['go']['main']['App']['GenerateCertificate'](arg1);
+}
+
 export function GetCitizen(arg1) {
   return window['go']['main']['App']['GetCitizen'](arg1);
 }
 
 export function GetCurrentOperator() {
   return window['go']['main']['App']['GetCurrentOperator']();
+}
+
+export function GetDashboardStats() {
+  return window['go']['main']['App']['GetDashboardStats']();
 }
 
 export function GetRegistrationHistory(arg1) {
