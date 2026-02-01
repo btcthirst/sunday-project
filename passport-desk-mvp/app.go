@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,6 +11,7 @@ import (
 
 	"passport-desk-mvp/internal/database"
 	"passport-desk-mvp/internal/security"
+	"passport-desk-mvp/internal/services"
 )
 
 const (
@@ -25,6 +27,9 @@ type App struct {
 	db       *database.Database
 	keystore *security.Keystore
 	crypto   *security.Crypto
+
+	// Services
+	citizenService *services.CitizenService
 
 	// Session state
 	mu              sync.RWMutex
@@ -136,6 +141,7 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 	}
 	a.db = db
 	a.crypto = security.NewCrypto(key)
+	a.citizenService = services.NewCitizenService(db, a.crypto)
 
 	// Hash password
 	passwordHash, err := security.HashPassword(password)
@@ -210,6 +216,7 @@ func (a *App) Login(username, password string) error {
 	a.db = db
 	a.encryptionKey = key
 	a.crypto = security.NewCrypto(key)
+	a.citizenService = services.NewCitizenService(db, a.crypto)
 	a.currentOperator = operator
 	a.isLocked = false
 	a.lastActivity = time.Now()
@@ -249,6 +256,7 @@ func (a *App) Logout() {
 		a.db = nil
 	}
 	a.crypto = nil
+	a.citizenService = nil
 	a.encryptionKey = nil
 }
 
@@ -309,4 +317,113 @@ type OperatorInfo struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
 	FullName string `json:"full_name"`
+}
+
+// --- Citizen Methods ---
+
+// CreateCitizen creates a new citizen
+func (a *App) CreateCitizen(input services.CitizenInput) (*services.CitizenOutput, error) {
+	if !a.IsAuthenticated() {
+		return nil, errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+
+	citizen, err := a.citizenService.Create(&input)
+	if err == nil {
+		a.db.LogAudit(&database.AuditLog{
+			OperatorID:  a.currentOperator.ID,
+			ActionType:  "CREATE",
+			TableName:   "citizens",
+			RecordID:    citizen.ID,
+			Description: fmt.Sprintf("Created citizen: %s", citizen.FullName),
+		})
+	}
+	return citizen, err
+}
+
+// GetCitizen retrieves a citizen by ID
+func (a *App) GetCitizen(id int64) (*services.CitizenOutput, error) {
+	if !a.IsAuthenticated() {
+		return nil, errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+	return a.citizenService.GetByID(id)
+}
+
+// UpdateCitizen updates a citizen
+func (a *App) UpdateCitizen(id int64, input services.CitizenInput) error {
+	if !a.IsAuthenticated() {
+		return errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+
+	err := a.citizenService.Update(id, &input)
+	if err == nil {
+		a.db.LogAudit(&database.AuditLog{
+			OperatorID:  a.currentOperator.ID,
+			ActionType:  "UPDATE",
+			TableName:   "citizens",
+			RecordID:    id,
+			Description: fmt.Sprintf("Updated citizen: %s %s %s", input.LastName, input.FirstName, input.MiddleName),
+		})
+	}
+	return err
+}
+
+// DeleteCitizen soft deletes a citizen
+func (a *App) DeleteCitizen(id int64) error {
+	if !a.IsAuthenticated() {
+		return errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+
+	err := a.citizenService.Delete(id)
+	if err == nil {
+		a.db.LogAudit(&database.AuditLog{
+			OperatorID:  a.currentOperator.ID,
+			ActionType:  "DELETE",
+			TableName:   "citizens",
+			RecordID:    id,
+			Description: "Soft deleted citizen",
+		})
+	}
+	return err
+}
+
+// RestoreCitizen restores a soft-deleted citizen
+func (a *App) RestoreCitizen(id int64) error {
+	if !a.IsAuthenticated() {
+		return errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+
+	err := a.citizenService.Restore(id)
+	if err == nil {
+		a.db.LogAudit(&database.AuditLog{
+			OperatorID:  a.currentOperator.ID,
+			ActionType:  "RESTORE",
+			TableName:   "citizens",
+			RecordID:    id,
+			Description: "Restored citizen",
+		})
+	}
+	return err
+}
+
+// SearchCitizens searches citizens by field
+func (a *App) SearchCitizens(query string, field string) ([]services.CitizenOutput, error) {
+	if !a.IsAuthenticated() {
+		return nil, errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+	return a.citizenService.Search(query, field)
+}
+
+// ListCitizens returns paginated list of citizens
+func (a *App) ListCitizens(page, limit int) (*services.CitizenListResult, error) {
+	if !a.IsAuthenticated() {
+		return nil, errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+	return a.citizenService.List(page, limit, false)
 }
