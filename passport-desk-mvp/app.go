@@ -35,6 +35,7 @@ type App struct {
 	citizenService      *services.CitizenService
 	registrationService *services.RegistrationService
 	reportService       *services.ReportService
+	backupService       *services.BackupService
 
 	// Session state
 	mu              sync.RWMutex
@@ -57,9 +58,10 @@ func NewApp() *App {
 	dataDir := filepath.Join(configDir, "passport-desk-mvp")
 
 	return &App{
-		dataDir:  dataDir,
-		keystore: security.NewKeystore(dataDir),
-		isLocked: true,
+		dataDir:       dataDir,
+		keystore:      security.NewKeystore(dataDir),
+		backupService: services.NewBackupService(dataDir),
+		isLocked:      true,
 	}
 }
 
@@ -70,6 +72,11 @@ func (a *App) startup(ctx context.Context) {
 	// Ensure data directory exists
 	if err := a.keystore.EnsureDataDir(); err != nil {
 		println("Warning: failed to create data directory:", err.Error())
+	}
+
+	// Run backup
+	if err := a.backupService.RunBackup(); err != nil {
+		println("Warning: failed to run backup:", err.Error())
 	}
 
 	// Start inactivity checker
