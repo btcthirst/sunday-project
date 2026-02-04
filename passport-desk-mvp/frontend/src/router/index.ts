@@ -4,6 +4,7 @@ import Dashboard from '../views/Dashboard.vue'
 import DashboardHome from '../views/DashboardHome.vue'
 import CitizenList from '../views/CitizenList.vue'
 import CitizenForm from '../views/CitizenForm.vue'
+import RegistrationList from '../views/RegistrationList.vue'
 import Placeholder from '../views/Placeholder.vue'
 
 const routes: RouteRecordRaw[] = [
@@ -45,17 +46,17 @@ const routes: RouteRecordRaw[] = [
             {
                 path: 'registrations',
                 name: 'Registrations',
-                component: Placeholder
-            },
-            {
-                path: 'reports',
-                name: 'Reports',
-                component: () => import('../views/Reports.vue')
+                component: RegistrationList
             },
             {
                 path: 'audit',
                 name: 'Audit',
                 component: () => import('../views/AuditLogs.vue')
+            },
+            {
+                path: 'help',
+                name: 'Help',
+                component: () => import('../views/Help.vue')
             }
         ]
     }
@@ -64,6 +65,24 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
     history: createWebHashHistory(),
     routes
+})
+
+import { IsAuthenticated } from '../../wailsjs/go/main/App'
+
+router.beforeEach(async (to, from, next) => {
+    if (to.meta.requiresAuth) {
+        try {
+            const auth = await IsAuthenticated()
+            if (!auth) {
+                next({ name: 'Login' })
+                return
+            }
+        } catch (e) {
+            next({ name: 'Login' })
+            return
+        }
+    }
+    next()
 })
 
 export default router

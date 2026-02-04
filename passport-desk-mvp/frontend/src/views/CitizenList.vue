@@ -168,7 +168,7 @@ async function loadData(page = 1) {
       pagination.itemCount = citizens.value.length
       pagination.pageCount = 1
     } else {
-      const result = await ListCitizens(page, pagination.pageSize)
+      const result = await ListCitizens(page, pagination.pageSize, false)
       if (result) {
         citizens.value = result.items || []
         pagination.page = result.page

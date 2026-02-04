@@ -109,3 +109,11 @@ type Certificate struct {
 	IssuedBy          int64     `json:"issued_by"` // operator_id
 	CreatedAt         time.Time `json:"created_at"`
 }
+
+// FamilyRelation represents a relationship between two citizens
+type FamilyRelation struct {
+	ID           int64  `json:"id"`
+	CitizenID    int64  `json:"citizen_id"`
+	MemberID     int64  `json:"member_id"`
+	RelationType string `json:"relation_type"` // spouse, child, parent, etc.
+}

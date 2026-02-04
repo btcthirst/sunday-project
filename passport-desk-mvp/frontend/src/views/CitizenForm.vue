@@ -136,6 +136,71 @@
             </n-grid>
           </n-tab-pane>
 
+          <n-tab-pane name="family" tab="Сім'я">
+            <n-space vertical :size="20">
+              <n-card bordered title="Додати члена сім'ї" size="small">
+                <n-grid :x-gap="12" :cols="3">
+                  <n-gi :span="1">
+                    <n-form-item label="Пошук громадянина">
+                      <n-select
+                        v-model:value="selectedMemberID"
+                        filterable
+                        placeholder="Прізвище..."
+                        :options="memberOptions"
+                        :loading="searchingMembers"
+                        clearable
+                        remote
+                        @search="handleSearchMembers"
+                      />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi :span="1">
+                    <n-form-item label="Родинний зв'язок">
+                      <n-select 
+                        v-model:value="selectedRelation" 
+                        :options="relationOptions" 
+                        placeholder="Оберіть..."
+                      />
+                    </n-form-item>
+                  </n-gi>
+                  <n-gi :span="1">
+                    <n-form-item label=" ">
+                      <n-button type="primary" block @click="addRelation" :disabled="!selectedMemberID || !selectedRelation">
+                        Додати
+                      </n-button>
+                    </n-form-item>
+                  </n-gi>
+                </n-grid>
+              </n-card>
+
+              <n-table :single-line="false" size="small">
+                <thead>
+                  <tr>
+                    <th>ПІБ</th>
+                    <th>Зв'язок</th>
+                    <th style="width: 80px">Дії</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(rel, index) in familyRelations" :key="index">
+                    <td>{{ rel.full_name }}</td>
+                    <td>{{ rel.relation_type }}</td>
+                    <td>
+                      <n-button size="small" type="error" ghost @click="removeRelation(index)">
+                        Видалити
+                      </n-button>
+                    </td>
+                  </tr>
+                  <tr v-if="familyRelations.length === 0">
+                    <td colspan="3" style="text-align: center; color: #999; padding: 20px">
+                      Членів сім'ї не додано
+                    </td>
+                  </tr>
+                </tbody>
+              </n-table>
+            </n-space>
+          </n-tab-pane>
+
           <n-tab-pane name="registration" tab="Реєстрація" :disabled="!isEdit">
             <n-alert v-if="!isEdit" type="info" style="margin-bottom: 16px;">
               Збережіть громадянина, щоб додати реєстрацію
@@ -160,17 +225,26 @@
         </n-tabs>
       </n-form>
     </n-card>
+
+    <certificate-options-modal
+      v-model:show="showCertModal"
+      title="Налаштування довідки про проживання"
+      @confirm="handleCertConfirm"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useMessage } from 'naive-ui'
-import { CreateCitizen, GetCitizen, UpdateCitizen, GenerateCertificate } from '../../wailsjs/go/main/App'
+import { useMessage, NTable, NAlert, NCard } from 'naive-ui'
+import { 
+  CreateCitizen, GetCitizen, UpdateCitizen, GenerateCitizenCertificate,
+  SearchCitizens, GetFamilyMembers
+} from '../../wailsjs/go/main/App'
 import { services } from '../../wailsjs/go/models'
-import { ArrowBack } from '@vicons/ionicons5'
 import RegistrationHistory from '../components/RegistrationHistory.vue'
+import CertificateOptionsModal from '../components/CertificateOptionsModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -246,6 +320,71 @@ const rules = {
   }
 }
 
+// --- Family Relations Logic ---
+const familyRelations = ref<any[]>([])
+const selectedMemberID = ref<number | null>(null)
+const selectedRelation = ref<string>('')
+const searchingMembers = ref(false)
+const memberOptions = ref<any[]>([])
+
+const relationOptions = [
+  { label: 'Чоловік', value: 'Чоловік' },
+  { label: 'Дружина', value: 'Дружина' },
+  { label: 'Син', value: 'Син' },
+  { label: 'Дочка', value: 'Дочка' },
+  { label: 'Мати', value: 'Мати' },
+  { label: 'Батько', value: 'Батько' },
+  { label: 'Брат', value: 'Брат' },
+  { label: 'Сестра', value: 'Сестра' },
+  { label: 'Дідусь', value: 'Дідусь' },
+  { label: 'Бабуся', value: 'Бабуся' },
+  { label: 'Онук', value: 'Онук' },
+  { label: 'Онука', value: 'Онука' }
+]
+
+async function handleSearchMembers(query: string) {
+  if (!query) return
+  searchingMembers.value = true
+  try {
+    const results = await SearchCitizens(query, 'name')
+    memberOptions.value = results
+      .filter(c => c.id !== citizenId.value) // Don't allow self as family member
+      .map(c => ({
+        label: `${c.full_name} (${c.birth_date})`,
+        value: c.id,
+        full_info: c
+      }))
+  } catch (e) {
+    console.error(e)
+  } finally {
+    searchingMembers.value = false
+  }
+}
+
+function addRelation() {
+  const member = memberOptions.value.find(m => m.value === selectedMemberID.value)
+  if (!member) return
+
+  // Avoid duplicates
+  if (familyRelations.value.find(r => r.member_id === selectedMemberID.value)) {
+    message.warning('Цей громадянин вже доданий до списку')
+    return
+  }
+
+  familyRelations.value.push({
+    member_id: selectedMemberID.value,
+    full_name: member.full_info.full_name,
+    relation_type: selectedRelation.value
+  })
+
+  // Clear selection
+  selectedMemberID.value = null
+}
+
+function removeRelation(index: number) {
+  familyRelations.value.splice(index, 1)
+}
+
 onMounted(async () => {
   if (isEdit.value) {
     const id = parseInt(route.params.id as string)
@@ -276,6 +415,18 @@ onMounted(async () => {
       })
       formValue.value = input
       
+      // Load family members
+      try {
+        const members = await GetFamilyMembers(id)
+        familyRelations.value = members.map(m => ({
+          member_id: m.id,
+          full_name: m.full_name,
+          relation_type: m.relation_type
+        }))
+      } catch (e) {
+        console.error('Failed to load family members', e)
+      }
+      
     } catch (e: any) {
       console.error(e)
       message.error('Помилка завантаження: ' + e.toString())
@@ -294,6 +445,12 @@ async function handleSave() {
 
   saving.value = true
   try {
+    // Attach relations to form value
+    formValue.value.family_relations = familyRelations.value.map(r => ({
+      member_id: r.member_id,
+      relation_type: r.relation_type
+    }))
+
     if (isEdit.value) {
       const id = parseInt(route.params.id as string)
       await UpdateCitizen(id, formValue.value)
@@ -311,11 +468,12 @@ async function handleSave() {
 }
 
 const printing = ref(false)
+const showCertModal = ref(false)
 
-async function printCertificate() {
+async function handleCertConfirm(opts: services.FamilyCertificateOptions) {
   printing.value = true
   try {
-    const path = await GenerateCertificate(citizenId.value)
+    const path = await GenerateCitizenCertificate(citizenId.value, opts)
     if (path === 'cancelled') {
         message.info('Збереження скасовано')
     } else {
@@ -327,6 +485,10 @@ async function printCertificate() {
   } finally {
     printing.value = false
   }
+}
+
+async function printCertificate() {
+  showCertModal.value = true
 }
 </script>
 

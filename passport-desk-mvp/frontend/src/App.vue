@@ -11,7 +11,18 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { darkTheme, ukUA, dateUkUA } from 'naive-ui'
+import { EventsOn } from '../wailsjs/runtime'
+
+const router = useRouter()
+
+onMounted(() => {
+  EventsOn('session-locked', () => {
+    router.push({ name: 'Login' })
+  })
+})
 </script>
 
 <style>

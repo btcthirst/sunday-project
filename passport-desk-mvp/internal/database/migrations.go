@@ -95,6 +95,17 @@ func (d *Database) Migrate() error {
 			FOREIGN KEY (issued_by) REFERENCES operators(id)
 		)`,
 
+		// Family relations table
+		`CREATE TABLE IF NOT EXISTS family_relations (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			citizen_id INTEGER NOT NULL,
+			member_id INTEGER NOT NULL,
+			relation_type TEXT NOT NULL,
+			FOREIGN KEY (citizen_id) REFERENCES citizens(id),
+			FOREIGN KEY (member_id) REFERENCES citizens(id),
+			UNIQUE(citizen_id, member_id)
+		)`,
+
 		// Indexes for better performance
 		`CREATE INDEX IF NOT EXISTS idx_citizens_last_name ON citizens(last_name)`,
 		`CREATE INDEX IF NOT EXISTS idx_citizens_passport ON citizens(passport_series, passport_number)`,

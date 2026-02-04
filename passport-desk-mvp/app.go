@@ -36,6 +36,7 @@ type App struct {
 	registrationService *services.RegistrationService
 	reportService       *services.ReportService
 	backupService       *services.BackupService
+	importExportService *services.ImportExportService
 
 	// Session state
 	mu              sync.RWMutex
@@ -102,6 +103,7 @@ func (a *App) inactivityChecker() {
 			if !a.isLocked && a.currentOperator != nil {
 				if time.Since(a.lastActivity) > inactivityTimeout {
 					a.isLocked = true
+					runtime.EventsEmit(a.ctx, "session-locked")
 				}
 			}
 			a.mu.Unlock()
@@ -154,7 +156,7 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 	a.db = db
 	a.crypto = security.NewCrypto(key)
 	a.citizenService = services.NewCitizenService(db, a.crypto)
-	a.registrationService = services.NewRegistrationService(db)
+	a.registrationService = services.NewRegistrationService(db, a.crypto)
 	a.reportService = services.NewReportService(db, a.citizenService, a.registrationService)
 
 	// Hash password
@@ -231,8 +233,10 @@ func (a *App) Login(username, password string) error {
 	a.encryptionKey = key
 	a.crypto = security.NewCrypto(key)
 	a.citizenService = services.NewCitizenService(db, a.crypto)
-	a.registrationService = services.NewRegistrationService(db)
-	a.reportService = services.NewReportService(db, a.citizenService, a.registrationService)
+	a.registrationService = services.NewRegistrationService(db, a.crypto)
+	a.reportService = services.NewReportService(a.db, a.citizenService, a.registrationService)
+	a.backupService = services.NewBackupService(a.dataDir)
+	a.importExportService = services.NewImportExportService(a.db, a.citizenService)
 	a.currentOperator = operator
 	a.isLocked = false
 	a.lastActivity = time.Now()
@@ -430,13 +434,40 @@ func (a *App) RestoreCitizen(id int64) error {
 	if err == nil {
 		a.db.LogAudit(&database.AuditLog{
 			OperatorID:  a.currentOperator.ID,
-			ActionType:  "RESTORE",
+			ActionType:  "UPDATE",
 			TableName:   "citizens",
 			RecordID:    id,
-			Description: "Restored citizen",
+			Description: "Restored soft-deleted citizen",
 		})
 	}
 	return err
+}
+
+// AddFamilyMember adds a connection between citizens
+func (a *App) AddFamilyMember(citizenID, memberID int64, relationType string) error {
+	if !a.IsAuthenticated() {
+		return errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+	return a.citizenService.AddFamilyMember(citizenID, memberID, relationType)
+}
+
+// RemoveFamilyMember removes a connection
+func (a *App) RemoveFamilyMember(citizenID, memberID int64) error {
+	if !a.IsAuthenticated() {
+		return errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+	return a.citizenService.RemoveFamilyMember(citizenID, memberID)
+}
+
+// GetFamilyMembers returns family members
+func (a *App) GetFamilyMembers(citizenID int64) ([]services.FamilyMemberOutput, error) {
+	if !a.IsAuthenticated() {
+		return nil, errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+	return a.citizenService.GetFamilyMembers(citizenID)
 }
 
 // SearchCitizens searches citizens by field
@@ -448,22 +479,14 @@ func (a *App) SearchCitizens(query string, field string) ([]services.CitizenOutp
 	return a.citizenService.Search(query, field)
 }
 
-// ListCitizens returns paginated list of citizens
-func (a *App) ListCitizens(page, limit int) (*services.CitizenListResult, error) {
+// ListCitizens returns paginated citizens
+func (a *App) ListCitizens(page, limit int, includeDeleted bool) (*services.CitizenListResult, error) {
 	if !a.IsAuthenticated() {
 		return nil, errors.New("unauthorized")
 	}
 	a.UpdateActivity()
 
-	// Log batch read
-	a.db.LogAudit(&database.AuditLog{
-		OperatorID:  a.currentOperator.ID,
-		ActionType:  "READ",
-		TableName:   "citizens",
-		Description: fmt.Sprintf("Listed citizens page %d, limit %d", page, limit),
-	})
-
-	return a.citizenService.List(page, limit, false)
+	return a.citizenService.List(page, limit, includeDeleted)
 }
 
 // --- Registration Methods ---
@@ -519,8 +542,8 @@ func (a *App) DeregisterCitizen(id int64, date string) error {
 
 // --- Report Methods ---
 
-// GenerateCertificate generates a registration certificate for a citizen and saves it
-func (a *App) GenerateCertificate(citizenID int64) (string, error) {
+// GenerateCitizenCertificate generates a registration certificate for a citizen and saves it
+func (a *App) GenerateCitizenCertificate(citizenID int64, opts services.FamilyCertificateOptions) (string, error) {
 	if !a.IsAuthenticated() {
 		return "", errors.New("unauthorized")
 	}
@@ -551,7 +574,7 @@ func (a *App) GenerateCertificate(citizenID int64) (string, error) {
 		Description: fmt.Sprintf("Generated certificate for citizen %d", citizenID),
 	})
 
-	base64Data, err := a.reportService.GenerateRegistrationCertificate(citizenID)
+	base64Data, err := a.reportService.GenerateRegistrationCertificate(citizenID, opts)
 	if err != nil {
 		return "", err
 	}
@@ -619,6 +642,119 @@ func (a *App) ExportCitizens(from, to string) (string, error) {
 	return filepath, nil
 }
 
+// ExportCitizensToExcel exports all citizens to Excel file
+func (a *App) ExportCitizensToExcel() (string, error) {
+	if !a.IsAuthenticated() {
+		return "", errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+
+	filepath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Експорт громадян",
+		DefaultFilename: fmt.Sprintf("citizens_export_%s.xlsx", time.Now().Format("20060102")),
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Excel Files (*.xlsx)", Pattern: "*.xlsx"},
+		},
+	})
+	if err != nil || filepath == "" {
+		return "cancelled", err
+	}
+
+	data, err := a.importExportService.ExportToExcel()
+	if err != nil {
+		return "", err
+	}
+
+	if err := os.WriteFile(filepath, data, 0644); err != nil {
+		return "", err
+	}
+
+	a.db.LogAudit(&database.AuditLog{
+		OperatorID:  a.currentOperator.ID,
+		ActionType:  "READ",
+		TableName:   "citizens",
+		Description: "Exported all citizens to Excel",
+	})
+
+	return filepath, nil
+}
+
+// ImportCitizens imports citizens from selected Excel file
+func (a *App) ImportCitizens() (int, error) {
+	if !a.IsAuthenticated() {
+		return 0, errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+
+	filepath, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Виберіть файл для імпорту",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Excel Files (*.xlsx)", Pattern: "*.xlsx"},
+		},
+	})
+	if err != nil || filepath == "" {
+		return 0, err
+	}
+
+	data, err := os.ReadFile(filepath)
+	if err != nil {
+		return 0, err
+	}
+
+	count, err := a.importExportService.ImportFromExcel(data)
+	if err == nil {
+		a.db.LogAudit(&database.AuditLog{
+			OperatorID:  a.currentOperator.ID,
+			ActionType:  "CREATE",
+			TableName:   "citizens",
+			Description: fmt.Sprintf("Imported %d citizens from Excel", count),
+		})
+	}
+
+	return count, err
+}
+
+// ExportCustomCitizensToExcel exports selected citizens and columns to Excel
+func (a *App) ExportCustomCitizensToExcel(ids []int64, columns []string) (string, error) {
+	if !a.IsAuthenticated() {
+		return "", errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+
+	if len(ids) == 0 {
+		return "", errors.New("no citizens selected")
+	}
+
+	filepath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Експорт обраних громадян",
+		DefaultFilename: fmt.Sprintf("citizens_custom_export_%s.xlsx", time.Now().Format("20060102")),
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Excel Files (*.xlsx)", Pattern: "*.xlsx"},
+		},
+	})
+	if err != nil || filepath == "" {
+		return "cancelled", err
+	}
+
+	data, err := a.importExportService.ExportCustomToExcel(ids, columns)
+	if err != nil {
+		return "", err
+	}
+
+	if err := os.WriteFile(filepath, data, 0644); err != nil {
+		return "", err
+	}
+
+	a.db.LogAudit(&database.AuditLog{
+		OperatorID:  a.currentOperator.ID,
+		ActionType:  "READ",
+		TableName:   "citizens",
+		Description: fmt.Sprintf("Exported %d selected citizens to Excel with %d columns", len(ids), len(columns)),
+	})
+
+	return filepath, nil
+}
+
 // GetDashboardStats returns dashboard statistics
 func (a *App) GetDashboardStats() (*services.StatsOutput, error) {
 	if !a.IsAuthenticated() {
@@ -638,4 +774,65 @@ func (a *App) GetAuditLogs(limit int) ([]database.AuditLogOutput, error) {
 		limit = 100
 	}
 	return a.db.GetAuditLogs(limit)
+}
+
+// GenerateFamilyStatusCertificate generates a custom family certificate and saves it
+func (a *App) GenerateFamilyStatusCertificate(opts services.FamilyCertificateOptions) (string, error) {
+	if !a.IsAuthenticated() {
+		return "", errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+
+	if len(opts.CitizenIDs) == 0 {
+		return "", errors.New("no citizens selected")
+	}
+
+	// Ask user where to save
+	filename := fmt.Sprintf("family_certificate_%s.pdf", time.Now().Format("20060102_150405"))
+	filepath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Зберегти довідку про склад сім'ї",
+		DefaultFilename: filename,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "PDF Files (*.pdf)", Pattern: "*.pdf"},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if filepath == "" {
+		return "cancelled", nil
+	}
+
+	// Create audit log
+	a.db.LogAudit(&database.AuditLog{
+		OperatorID:  a.currentOperator.ID,
+		ActionType:  "READ",
+		TableName:   "citizens",
+		Description: fmt.Sprintf("Generated family certificate for %d citizens", len(opts.CitizenIDs)),
+	})
+
+	base64Data, err := a.reportService.GenerateFamilyStatusCertificate(opts)
+	if err != nil {
+		return "", err
+	}
+
+	// Decode PDF
+	pdfBytes, err := base64.StdEncoding.DecodeString(base64Data)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode PDF: %w", err)
+	}
+
+	// Save to selected file
+	if err := os.WriteFile(filepath, pdfBytes, 0644); err != nil {
+		return "", fmt.Errorf("failed to save file: %w", err)
+	}
+
+	return filepath, nil
+}
+func (a *App) ListRegistrations(search string, isActive *bool, page, limit int) (*services.RegistrationListResult, error) {
+	if !a.IsAuthenticated() {
+		return nil, errors.New("unauthorized")
+	}
+	a.UpdateActivity()
+	return a.registrationService.ListAll(search, isActive, page, limit)
 }

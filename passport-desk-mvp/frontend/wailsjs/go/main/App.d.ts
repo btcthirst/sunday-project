@@ -4,6 +4,8 @@ import {services} from '../models';
 import {database} from '../models';
 import {main} from '../models';
 
+export function AddFamilyMember(arg1:number,arg2:number,arg3:string):Promise<void>;
+
 export function CreateCitizen(arg1:services.CitizenInput):Promise<services.CitizenOutput>;
 
 export function CreateRegistration(arg1:database.RegistrationInput):Promise<database.RegistrationOutput>;
@@ -14,7 +16,13 @@ export function DeregisterCitizen(arg1:number,arg2:string):Promise<void>;
 
 export function ExportCitizens(arg1:string,arg2:string):Promise<string>;
 
-export function GenerateCertificate(arg1:number):Promise<string>;
+export function ExportCitizensToExcel():Promise<string>;
+
+export function ExportCustomCitizensToExcel(arg1:Array<number>,arg2:Array<string>):Promise<string>;
+
+export function GenerateCitizenCertificate(arg1:number,arg2:services.FamilyCertificateOptions):Promise<string>;
+
+export function GenerateFamilyStatusCertificate(arg1:services.FamilyCertificateOptions):Promise<string>;
 
 export function GetAuditLogs(arg1:number):Promise<Array<database.AuditLogOutput>>;
 
@@ -24,7 +32,11 @@ export function GetCurrentOperator():Promise<main.OperatorInfo>;
 
 export function GetDashboardStats():Promise<services.StatsOutput>;
 
+export function GetFamilyMembers(arg1:number):Promise<Array<services.FamilyMemberOutput>>;
+
 export function GetRegistrationHistory(arg1:number):Promise<Array<database.RegistrationOutput>>;
+
+export function ImportCitizens():Promise<number>;
 
 export function IsAuthenticated():Promise<boolean>;
 
@@ -32,11 +44,15 @@ export function IsFirstRun():Promise<boolean>;
 
 export function IsLocked():Promise<boolean>;
 
-export function ListCitizens(arg1:number,arg2:number):Promise<services.CitizenListResult>;
+export function ListCitizens(arg1:number,arg2:number,arg3:boolean):Promise<services.CitizenListResult>;
+
+export function ListRegistrations(arg1:string,arg2:any,arg3:number,arg4:number):Promise<services.RegistrationListResult>;
 
 export function Login(arg1:string,arg2:string):Promise<void>;
 
 export function Logout():Promise<void>;
+
+export function RemoveFamilyMember(arg1:number,arg2:number):Promise<void>;
 
 export function RestoreCitizen(arg1:number):Promise<void>;
 

@@ -16,26 +16,82 @@ type CitizenService struct {
 	crypto *security.Crypto
 }
 
+const citizenCols = `c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
+	c.passport_series, c.passport_number, c.passport_type, c.tax_number,
+	c.gender, c.birth_place, c.phone, c.email, c.notes,
+	c.deleted, c.created_at, c.updated_at`
+
+func getInverseRelation(rel string, gender string) string {
+	isMale := gender == "M"
+
+	switch rel {
+	case "Батько", "Мати":
+		if isMale {
+			return "Син"
+		}
+		return "Дочка"
+	case "Син", "Дочка":
+		if isMale {
+			return "Батько"
+		}
+		return "Мати"
+	case "Чоловік":
+		return "Дружина"
+	case "Дружина":
+		return "Чоловік"
+	case "Брат", "Сестра":
+		if isMale {
+			return "Брат"
+		}
+		return "Сестра"
+	case "Дідусь", "Бабуся":
+		if isMale {
+			return "Онук"
+		}
+		return "Онука"
+	case "Онук", "Онука":
+		if isMale {
+			return "Дідусь"
+		}
+		return "Бабуся"
+	default:
+		return rel
+	}
+}
+
 // NewCitizenService creates a new citizen service
 func NewCitizenService(db *database.Database, crypto *security.Crypto) *CitizenService {
 	return &CitizenService{db: db, crypto: crypto}
 }
 
+// FamilyRelationInput represents input for a family relationship
+type FamilyRelationInput struct {
+	MemberID     int64  `json:"member_id"`
+	RelationType string `json:"relation_type"`
+}
+
 // CitizenInput is the input structure for creating/updating citizens
 type CitizenInput struct {
-	LastName       string `json:"last_name"`
-	FirstName      string `json:"first_name"`
-	MiddleName     string `json:"middle_name"`
-	BirthDate      string `json:"birth_date"` // YYYY-MM-DD
-	PassportSeries string `json:"passport_series"`
-	PassportNumber string `json:"passport_number"`
-	PassportType   string `json:"passport_type"`
-	TaxNumber      string `json:"tax_number"`
-	Gender         string `json:"gender"` // M or F
-	BirthPlace     string `json:"birth_place"`
-	Phone          string `json:"phone"`
-	Email          string `json:"email"`
-	Notes          string `json:"notes"`
+	LastName        string                `json:"last_name"`
+	FirstName       string                `json:"first_name"`
+	MiddleName      string                `json:"middle_name"`
+	BirthDate       string                `json:"birth_date"` // YYYY-MM-DD
+	PassportSeries  string                `json:"passport_series"`
+	PassportNumber  string                `json:"passport_number"`
+	PassportType    string                `json:"passport_type"`
+	TaxNumber       string                `json:"tax_number"`
+	Gender          string                `json:"gender"` // M or F
+	BirthPlace      string                `json:"birth_place"`
+	Phone           string                `json:"phone"`
+	Email           string                `json:"email"`
+	Notes           string                `json:"notes"`
+	FamilyRelations []FamilyRelationInput `json:"family_relations"`
+}
+
+// FamilyMemberOutput represents a family member with their details
+type FamilyMemberOutput struct {
+	CitizenOutput
+	RelationType string `json:"relation_type"`
 }
 
 // CitizenOutput is the output structure (with decrypted fields)
@@ -73,36 +129,26 @@ type CitizenListResult struct {
 	TotalPages int             `json:"total_pages"`
 }
 
-// Create creates a new citizen with encrypted fields
+// Create adds a new citizen with encrypted fields
 func (s *CitizenService) Create(input *CitizenInput) (*CitizenOutput, error) {
-	// Encrypt sensitive fields
-	encPassportSeries, err := s.crypto.Encrypt(input.PassportSeries)
+	tx, err := s.db.DB().Begin()
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt passport series: %w", err)
+		return nil, err
 	}
+	defer tx.Rollback()
 
-	encPassportNumber, err := s.crypto.Encrypt(input.PassportNumber)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt passport number: %w", err)
-	}
+	encPassportSeries, _ := s.crypto.Encrypt(input.PassportSeries)
+	encPassportNumber, _ := s.crypto.Encrypt(input.PassportNumber)
+	encTaxNumber, _ := s.crypto.Encrypt(input.TaxNumber)
+	encPhone, _ := s.crypto.Encrypt(input.Phone)
 
-	encTaxNumber, err := s.crypto.Encrypt(input.TaxNumber)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt tax number: %w", err)
-	}
-
-	encPhone, err := s.crypto.Encrypt(input.Phone)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt phone: %w", err)
-	}
-
-	result, err := s.db.DB().Exec(`
+	result, err := tx.Exec(`
 		INSERT INTO citizens (
 			last_name, first_name, middle_name, birth_date,
 			passport_series, passport_number, passport_type, tax_number,
 			gender, birth_place, phone, email, notes
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, input.LastName, input.FirstName, input.MiddleName, input.BirthDate,
+	`, input.LastName, input.FirstName, input.MiddleName, normalizeDate(input.BirthDate),
 		encPassportSeries, encPassportNumber, input.PassportType, encTaxNumber,
 		input.Gender, input.BirthPlace, encPhone, input.Email, input.Notes)
 
@@ -111,60 +157,86 @@ func (s *CitizenService) Create(input *CitizenInput) (*CitizenOutput, error) {
 	}
 
 	id, _ := result.LastInsertId()
+
+	// Insert family relations
+	for _, rel := range input.FamilyRelations {
+		// Use AddFamilyMemberWithTx if it existed, but we'll just use Exec here for simplicity
+		if _, err := tx.Exec("INSERT OR REPLACE INTO family_relations (citizen_id, member_id, relation_type) VALUES (?, ?, ?)",
+			id, rel.MemberID, rel.RelationType); err != nil {
+			return nil, fmt.Errorf("failed to add family relation for %d: %w", rel.MemberID, err)
+		}
+		if _, err := tx.Exec("INSERT OR REPLACE INTO family_relations (citizen_id, member_id, relation_type) VALUES (?, ?, ?)",
+			rel.MemberID, id, getInverseRelation(rel.RelationType, input.Gender)); err != nil {
+			return nil, fmt.Errorf("failed to add inverse family relation for %d: %w", rel.MemberID, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
 	return s.GetByID(id)
 }
 
 // GetByID retrieves a citizen by ID
 func (s *CitizenService) GetByID(id int64) (*CitizenOutput, error) {
-	row := s.db.DB().QueryRow(`
-		SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
-			c.passport_series, c.passport_number, c.passport_type, c.tax_number,
-			c.gender, c.birth_place, c.phone, c.email, c.notes,
-			c.deleted, c.created_at, c.updated_at,
+	row := s.db.DB().QueryRow(fmt.Sprintf(`
+		SELECT %s,
 			(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
 		FROM citizens c
 		LEFT JOIN registrations r ON c.id = r.citizen_id AND r.is_active = 1
 		WHERE c.id = ?
-	`, id)
+	`, citizenCols), id)
 
 	return s.scanCitizen(row)
 }
 
-// Update updates a citizen
+// Update updates citizen details
 func (s *CitizenService) Update(id int64, input *CitizenInput) error {
-	// Encrypt sensitive fields
-	encPassportSeries, err := s.crypto.Encrypt(input.PassportSeries)
+	tx, err := s.db.DB().Begin()
 	if err != nil {
-		return fmt.Errorf("failed to encrypt passport series: %w", err)
+		return err
 	}
+	defer tx.Rollback()
 
-	encPassportNumber, err := s.crypto.Encrypt(input.PassportNumber)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt passport number: %w", err)
-	}
+	encPassportSeries, _ := s.crypto.Encrypt(input.PassportSeries)
+	encPassportNumber, _ := s.crypto.Encrypt(input.PassportNumber)
+	encTaxNumber, _ := s.crypto.Encrypt(input.TaxNumber)
+	encPhone, _ := s.crypto.Encrypt(input.Phone)
 
-	encTaxNumber, err := s.crypto.Encrypt(input.TaxNumber)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt tax number: %w", err)
-	}
-
-	encPhone, err := s.crypto.Encrypt(input.Phone)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt phone: %w", err)
-	}
-
-	_, err = s.db.DB().Exec(`
+	_, err = tx.Exec(`
 		UPDATE citizens SET
 			last_name = ?, first_name = ?, middle_name = ?, birth_date = ?,
 			passport_series = ?, passport_number = ?, passport_type = ?, tax_number = ?,
 			gender = ?, birth_place = ?, phone = ?, email = ?, notes = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, input.LastName, input.FirstName, input.MiddleName, input.BirthDate,
+	`, input.LastName, input.FirstName, input.MiddleName, normalizeDate(input.BirthDate),
 		encPassportSeries, encPassportNumber, input.PassportType, encTaxNumber,
 		input.Gender, input.BirthPlace, encPhone, input.Email, input.Notes, id)
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Update family relations (simplest way: delete and re-insert)
+	// We only delete relations FROM this citizen.
+	if _, err := tx.Exec("DELETE FROM family_relations WHERE citizen_id = ?", id); err != nil {
+		return fmt.Errorf("failed to clear old family relations: %w", err)
+	}
+
+	for _, rel := range input.FamilyRelations {
+		if _, err := tx.Exec("INSERT OR REPLACE INTO family_relations (citizen_id, member_id, relation_type) VALUES (?, ?, ?)",
+			id, rel.MemberID, rel.RelationType); err != nil {
+			return fmt.Errorf("failed to update family relation for %d: %w", rel.MemberID, err)
+		}
+		if _, err := tx.Exec("INSERT OR REPLACE INTO family_relations (citizen_id, member_id, relation_type) VALUES (?, ?, ?)",
+			rel.MemberID, id, getInverseRelation(rel.RelationType, input.Gender)); err != nil {
+			return fmt.Errorf("failed to update inverse family relation for %d: %w", rel.MemberID, err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // Delete performs soft delete
@@ -200,15 +272,12 @@ func (s *CitizenService) List(page, limit int, includeDeleted bool) (*CitizenLis
 	}
 
 	// Get items
-	query := `
-		SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
-			c.passport_series, c.passport_number, c.passport_type, c.tax_number,
-			c.gender, c.birth_place, c.phone, c.email, c.notes,
-			c.deleted, c.created_at, c.updated_at,
+	query := fmt.Sprintf(`
+		SELECT %s,
 			(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
 		FROM citizens c
 		LEFT JOIN registrations r ON c.id = r.citizen_id AND r.is_active = 1
-	`
+	`, citizenCols)
 	if !includeDeleted {
 		query += ` WHERE c.deleted = 0`
 	}
@@ -254,14 +323,12 @@ func (s *CitizenService) Search(query string, field string) ([]CitizenOutput, er
 	case "name":
 		// Search by name (partial match)
 		pattern := "%" + query + "%"
-		sqlQuery = `
-			SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
-				c.passport_series, c.passport_number, c.passport_type, c.tax_number,
-				c.gender, c.birth_place, c.phone, c.email, c.notes,
-				c.deleted, c.created_at, c.updated_at,
+		sqlQuery = fmt.Sprintf(`
+			SELECT %s,
 				(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
 			FROM citizens c
 			LEFT JOIN registrations r ON c.id = r.citizen_id AND r.is_active = 1
+`, citizenCols) + `
 			WHERE c.deleted = 0 AND (
 				c.last_name LIKE ? OR c.first_name LIKE ? OR c.middle_name LIKE ?
 				OR (c.last_name || ' ' || c.first_name || ' ' || c.middle_name) LIKE ?
@@ -272,14 +339,12 @@ func (s *CitizenService) Search(query string, field string) ([]CitizenOutput, er
 		args = []interface{}{pattern, pattern, pattern, pattern}
 
 	case "birth_date":
-		sqlQuery = `
-			SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
-				c.passport_series, c.passport_number, c.passport_type, c.tax_number,
-				c.gender, c.birth_place, c.phone, c.email, c.notes,
-				c.deleted, c.created_at, c.updated_at,
+		sqlQuery = fmt.Sprintf(`
+			SELECT %s,
 				(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
 			FROM citizens c
 			LEFT JOIN registrations r ON c.id = r.citizen_id AND r.is_active = 1
+`, citizenCols) + `
 			WHERE c.deleted = 0 AND c.birth_date = ?
 			ORDER BY c.last_name, c.first_name
 			LIMIT 50
@@ -316,16 +381,13 @@ func (s *CitizenService) Search(query string, field string) ([]CitizenOutput, er
 // searchEncryptedField searches through encrypted fields
 func (s *CitizenService) searchEncryptedField(query string, field string) ([]CitizenOutput, error) {
 	// Get all non-deleted citizens
-	rows, err := s.db.DB().Query(`
-		SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
-			c.passport_series, c.passport_number, c.passport_type, c.tax_number,
-			c.gender, c.birth_place, c.phone, c.email, c.notes,
-			c.deleted, c.created_at, c.updated_at,
+	rows, err := s.db.DB().Query(fmt.Sprintf(`
+		SELECT %s,
 			(r.settlement || ', ' || r.street || ' ' || r.house_number) as active_address
 		FROM citizens c
 		LEFT JOIN registrations r ON c.id = r.citizen_id AND r.is_active = 1
 		WHERE c.deleted = 0
-	`)
+	`, citizenCols))
 	if err != nil {
 		return nil, err
 	}
@@ -394,6 +456,7 @@ func (s *CitizenService) scanCitizenFromScanner(sc scanner) (*CitizenOutput, err
 	c.PassportNumber, _ = s.crypto.Decrypt(encPassportNumber)
 	c.TaxNumber, _ = s.crypto.Decrypt(encTaxNumber)
 	c.Phone, _ = s.crypto.Decrypt(encPhone)
+	c.BirthDate = normalizeDate(c.BirthDate)
 
 	if activeAddress.Valid {
 		c.ActiveAddress = activeAddress.String
@@ -439,4 +502,93 @@ func genderToUkrainian(gender string) string {
 	default:
 		return ""
 	}
+}
+
+// AddFamilyMember adds a relationship between two citizens
+func (s *CitizenService) AddFamilyMember(citizenID, memberID int64, relationType string) error {
+	_, err := s.db.DB().Exec(
+		"INSERT INTO family_relations (citizen_id, member_id, relation_type) VALUES (?, ?, ?)",
+		citizenID, memberID, relationType,
+	)
+	return err
+}
+
+// RemoveFamilyMember removes a relationship
+func (s *CitizenService) RemoveFamilyMember(citizenID, memberID int64) error {
+	_, err := s.db.DB().Exec(
+		"DELETE FROM family_relations WHERE citizen_id = ? AND member_id = ?",
+		citizenID, memberID,
+	)
+	return err
+}
+
+// GetFamilyMembers returns all family members for a citizen
+func (s *CitizenService) GetFamilyMembers(citizenID int64) ([]FamilyMemberOutput, error) {
+	query := fmt.Sprintf(`
+		SELECT %s, '' as active_address, fr.relation_type 
+		FROM family_relations fr
+		JOIN citizens c ON fr.member_id = c.id
+		WHERE fr.citizen_id = ? AND c.deleted = 0
+	`, citizenCols)
+	rows, err := s.db.DB().Query(query, citizenID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var members []FamilyMemberOutput
+	for rows.Next() {
+		var relationType string
+		// scanCitizenFromScanner expects a specific set of columns.
+		// We added relation_type at the end, so we need a custom scanner or handle it.
+		// Let's use a simpler approach: scan everything except relation_type using scanCitizenFromScanner if possible.
+		// Actually, scanCitizenFromScanner(rows) will consume the row.
+
+		// To keep it simple, let's just scan manually but use the decryption logic.
+		var c CitizenOutput
+		var encPassportSeries, encPassportNumber, encTaxNumber, encPhone string
+		var createdAt, updatedAt time.Time
+		var dummyActiveAddress sql.NullString
+
+		err := rows.Scan(
+			&c.ID, &c.LastName, &c.FirstName, &c.MiddleName, &c.BirthDate,
+			&encPassportSeries, &encPassportNumber, &c.PassportType, &encTaxNumber,
+			&c.Gender, &c.BirthPlace, &encPhone, &c.Email, &c.Notes,
+			&c.Deleted, &createdAt, &updatedAt, &dummyActiveAddress, &relationType,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		c.BirthDate = normalizeDate(c.BirthDate)
+
+		// Decrypt sensitive fields
+		c.PassportSeries, _ = s.crypto.Decrypt(encPassportSeries)
+		c.PassportNumber, _ = s.crypto.Decrypt(encPassportNumber)
+		c.TaxNumber, _ = s.crypto.Decrypt(encTaxNumber)
+		c.Phone, _ = s.crypto.Decrypt(encPhone)
+
+		// Computed fields
+		c.FullName = strings.TrimSpace(c.LastName + " " + c.FirstName + " " + c.MiddleName)
+		c.PassportMasked = maskPassport(c.PassportSeries, c.PassportNumber)
+		c.TaxNumberMasked = maskTaxNumber(c.TaxNumber)
+		c.GenderDisplay = genderToUkrainian(c.Gender)
+		c.CreatedAt = createdAt.Format("2006-01-02 15:04:05")
+		c.UpdatedAt = updatedAt.Format("2006-01-02 15:04:05")
+
+		members = append(members, FamilyMemberOutput{
+			CitizenOutput: c,
+			RelationType:  relationType,
+		})
+	}
+
+	return members, nil
+}
+
+// normalizeDate strips time from ISO date string
+func normalizeDate(d string) string {
+	if idx := strings.Index(d, "T"); idx != -1 {
+		return d[:idx]
+	}
+	return d
 }
