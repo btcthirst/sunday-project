@@ -1,5 +1,10 @@
 package database
 
+import (
+	"fmt"
+	"strings"
+)
+
 // Migrate runs database migrations
 func (d *Database) Migrate() error {
 	migrations := []string{
@@ -9,7 +14,8 @@ func (d *Database) Migrate() error {
 			username TEXT UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL,
 			full_name TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 
 		// Citizens table
@@ -48,6 +54,7 @@ func (d *Database) Migrate() error {
 			basis_document TEXT,
 			is_active BOOLEAN DEFAULT 1,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (citizen_id) REFERENCES citizens(id)
 		)`,
 
@@ -60,26 +67,8 @@ func (d *Database) Migrate() error {
 			table_name TEXT NOT NULL,
 			record_id INTEGER,
 			description TEXT,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (operator_id) REFERENCES operators(id)
-		)`,
-
-		// Registrations table
-		`CREATE TABLE IF NOT EXISTS registrations (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			citizen_id INTEGER NOT NULL,
-			registration_type TEXT CHECK(registration_type IN ('permanent', 'temporary')),
-			region TEXT NOT NULL,
-			district TEXT,
-			settlement TEXT NOT NULL,
-			street TEXT NOT NULL,
-			house_number TEXT NOT NULL,
-			apartment_number TEXT,
-			registration_date DATE NOT NULL,
-			deregistration_date DATE,
-			basis_document TEXT,
-			is_active BOOLEAN DEFAULT 1,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (citizen_id) REFERENCES citizens(id)
 		)`,
 
 		// Certificates table
@@ -91,6 +80,7 @@ func (d *Database) Migrate() error {
 			purpose TEXT,
 			issued_by INTEGER NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (citizen_id) REFERENCES citizens(id),
 			FOREIGN KEY (issued_by) REFERENCES operators(id)
 		)`,
@@ -101,6 +91,8 @@ func (d *Database) Migrate() error {
 			citizen_id INTEGER NOT NULL,
 			member_id INTEGER NOT NULL,
 			relation_type TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (citizen_id) REFERENCES citizens(id),
 			FOREIGN KEY (member_id) REFERENCES citizens(id),
 			UNIQUE(citizen_id, member_id)
@@ -117,6 +109,44 @@ func (d *Database) Migrate() error {
 		if _, err := d.db.Exec(m); err != nil {
 			return err
 		}
+	}
+
+	// Add missing columns for existing databases
+	tablesToUpdate := []struct {
+		table   string
+		columns []string
+	}{
+		{"operators", []string{"updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"}},
+		{"registrations", []string{"updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"}},
+		{"certificates", []string{"updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"}},
+		{"audit_log", []string{"updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"}},
+		{"family_relations", []string{
+			"created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+			"updated_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+		}},
+	}
+
+	for _, t := range tablesToUpdate {
+		for _, col := range t.columns {
+			colName := strings.Split(col, " ")[0]
+			var count int
+			err := d.db.QueryRow(fmt.Sprintf("SELECT count(*) FROM pragma_table_info('%s') WHERE name='%s'", t.table, colName)).Scan(&count)
+			if err == nil && count == 0 {
+				d.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", t.table, col))
+			}
+		}
+	}
+
+	// Add triggers for automatic updated_at
+	triggerTables := []string{"operators", "citizens", "registrations", "audit_log", "certificates", "family_relations"}
+	for _, table := range triggerTables {
+		triggerQuery := fmt.Sprintf(`
+			CREATE TRIGGER IF NOT EXISTS trg_%s_updated_at
+			AFTER UPDATE ON %s
+			BEGIN
+				UPDATE %s SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+			END;`, table, table, table)
+		d.db.Exec(triggerQuery)
 	}
 
 	// Add passport_type if not exists for existing databases

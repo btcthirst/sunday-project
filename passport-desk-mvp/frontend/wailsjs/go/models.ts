@@ -9,6 +9,8 @@ export namespace database {
 	    table_name: string;
 	    record_id?: number;
 	    description?: string;
+	    // Go type: time
+	    updated_at: any;
 	    operator_name: string;
 	
 	    static createFrom(source: any = {}) {
@@ -24,6 +26,7 @@ export namespace database {
 	        this.table_name = source["table_name"];
 	        this.record_id = source["record_id"];
 	        this.description = source["description"];
+	        this.updated_at = this.convertValues(source["updated_at"], null);
 	        this.operator_name = source["operator_name"];
 	    }
 	
@@ -89,6 +92,10 @@ export namespace database {
 	    deregistration_date?: string;
 	    basis_document?: string;
 	    is_active: boolean;
+	    // Go type: time
+	    created_at: any;
+	    // Go type: time
+	    updated_at: any;
 	
 	    static createFrom(source: any = {}) {
 	        return new RegistrationOutput(source);
@@ -109,7 +116,27 @@ export namespace database {
 	        this.deregistration_date = source["deregistration_date"];
 	        this.basis_document = source["basis_document"];
 	        this.is_active = source["is_active"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.updated_at = this.convertValues(source["updated_at"], null);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
@@ -395,6 +422,10 @@ export namespace services {
 	    deregistration_date?: string;
 	    basis_document?: string;
 	    is_active: boolean;
+	    // Go type: time
+	    created_at: any;
+	    // Go type: time
+	    updated_at: any;
 	    citizen_name: string;
 	    citizen_birth: string;
 	    citizen_phone: string;
@@ -419,11 +450,31 @@ export namespace services {
 	        this.deregistration_date = source["deregistration_date"];
 	        this.basis_document = source["basis_document"];
 	        this.is_active = source["is_active"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.updated_at = this.convertValues(source["updated_at"], null);
 	        this.citizen_name = source["citizen_name"];
 	        this.citizen_birth = source["citizen_birth"];
 	        this.citizen_phone = source["citizen_phone"];
 	        this.citizen_tax = source["citizen_tax"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class RegistrationListResult {
 	    items: RegistrationListItem[];

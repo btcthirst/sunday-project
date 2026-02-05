@@ -9,6 +9,7 @@ type Operator struct {
 	PasswordHash string    `json:"-"` // Never sent to frontend
 	FullName     string    `json:"full_name"`
 	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Citizen represents a citizen record
@@ -49,6 +50,7 @@ type Registration struct {
 	BasisDocument      string    `json:"basis_document,omitempty"`
 	IsActive           bool      `json:"is_active"`
 	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // RegistrationInput represents input for registration creation
@@ -67,19 +69,21 @@ type RegistrationInput struct {
 
 // RegistrationOutput represents output for registration
 type RegistrationOutput struct {
-	ID                 int64  `json:"id"`
-	CitizenID          int64  `json:"citizen_id"`
-	RegistrationType   string `json:"registration_type"`
-	Region             string `json:"region"`
-	District           string `json:"district,omitempty"`
-	Settlement         string `json:"settlement"`
-	Street             string `json:"street"`
-	HouseNumber        string `json:"house_number"`
-	ApartmentNumber    string `json:"apartment_number,omitempty"`
-	RegistrationDate   string `json:"registration_date"`
-	DeregistrationDate string `json:"deregistration_date,omitempty"`
-	BasisDocument      string `json:"basis_document,omitempty"`
-	IsActive           bool   `json:"is_active"`
+	ID                 int64     `json:"id"`
+	CitizenID          int64     `json:"citizen_id"`
+	RegistrationType   string    `json:"registration_type"`
+	Region             string    `json:"region"`
+	District           string    `json:"district,omitempty"`
+	Settlement         string    `json:"settlement"`
+	Street             string    `json:"street"`
+	HouseNumber        string    `json:"house_number"`
+	ApartmentNumber    string    `json:"apartment_number,omitempty"`
+	RegistrationDate   string    `json:"registration_date"`
+	DeregistrationDate string    `json:"deregistration_date,omitempty"`
+	BasisDocument      string    `json:"basis_document,omitempty"`
+	IsActive           bool      `json:"is_active"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // AuditLog represents an audit trail entry
@@ -91,6 +95,7 @@ type AuditLog struct {
 	TableName   string    `json:"table_name"`
 	RecordID    int64     `json:"record_id,omitempty"`
 	Description string    `json:"description,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // AuditLogOutput includes operator name for display
@@ -108,12 +113,15 @@ type Certificate struct {
 	Purpose           string    `json:"purpose,omitempty"`
 	IssuedBy          int64     `json:"issued_by"` // operator_id
 	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // FamilyRelation represents a relationship between two citizens
 type FamilyRelation struct {
-	ID           int64  `json:"id"`
-	CitizenID    int64  `json:"citizen_id"`
-	MemberID     int64  `json:"member_id"`
-	RelationType string `json:"relation_type"` // spouse, child, parent, etc.
+	ID           int64     `json:"id"`
+	CitizenID    int64     `json:"citizen_id"`
+	MemberID     int64     `json:"member_id"`
+	RelationType string    `json:"relation_type"` // spouse, child, parent, etc.
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }

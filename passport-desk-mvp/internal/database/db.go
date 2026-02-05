@@ -73,9 +73,9 @@ func (d *Database) CreateOperator(op *Operator) error {
 func (d *Database) GetOperatorByUsername(username string) (*Operator, error) {
 	op := &Operator{}
 	err := d.db.QueryRow(
-		`SELECT id, username, password_hash, full_name, created_at FROM operators WHERE username = ?`,
+		`SELECT id, username, password_hash, full_name, created_at, updated_at FROM operators WHERE username = ?`,
 		username,
-	).Scan(&op.ID, &op.Username, &op.PasswordHash, &op.FullName, &op.CreatedAt)
+	).Scan(&op.ID, &op.Username, &op.PasswordHash, &op.FullName, &op.CreatedAt, &op.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +104,7 @@ func (d *Database) LogAudit(log *AuditLog) error {
 // GetAuditLogs retrieves recent audit logs
 func (d *Database) GetAuditLogs(limit int) ([]AuditLogOutput, error) {
 	rows, err := d.db.Query(`
-		SELECT a.id, a.timestamp, a.operator_id, a.action_type, a.table_name, a.record_id, a.description, o.full_name
+		SELECT a.id, a.timestamp, a.operator_id, a.action_type, a.table_name, a.record_id, a.description, a.updated_at, o.full_name
 		FROM audit_log a
 		LEFT JOIN operators o ON a.operator_id = o.id
 		ORDER BY a.timestamp DESC
@@ -118,7 +118,7 @@ func (d *Database) GetAuditLogs(limit int) ([]AuditLogOutput, error) {
 	for rows.Next() {
 		var l AuditLogOutput
 		var opName sql.NullString
-		err := rows.Scan(&l.ID, &l.Timestamp, &l.OperatorID, &l.ActionType, &l.TableName, &l.RecordID, &l.Description, &opName)
+		err := rows.Scan(&l.ID, &l.Timestamp, &l.OperatorID, &l.ActionType, &l.TableName, &l.RecordID, &l.Description, &l.UpdatedAt, &opName)
 		if err != nil {
 			return nil, err
 		}

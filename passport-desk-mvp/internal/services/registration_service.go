@@ -93,7 +93,8 @@ func (s *RegistrationService) GetByID(id int64) (*database.RegistrationOutput, e
 	row := s.db.DB().QueryRow(`
 		SELECT id, citizen_id, registration_type, region, district, settlement,
 		       street, house_number, apartment_number, registration_date, 
-		       COALESCE(deregistration_date, ''), COALESCE(basis_document, ''), is_active
+		       COALESCE(deregistration_date, ''), COALESCE(basis_document, ''), is_active,
+		       created_at, updated_at
 		FROM registrations WHERE id = ?
 	`, id)
 
@@ -101,6 +102,7 @@ func (s *RegistrationService) GetByID(id int64) (*database.RegistrationOutput, e
 		&r.ID, &r.CitizenID, &r.RegistrationType, &r.Region, &r.District, &r.Settlement,
 		&r.Street, &r.HouseNumber, &r.ApartmentNumber, &r.RegistrationDate,
 		&r.DeregistrationDate, &r.BasisDocument, &r.IsActive,
+		&r.CreatedAt, &r.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -189,6 +191,7 @@ func (s *RegistrationService) ListAll(search string, isActive *bool, page, limit
 			r.id, r.citizen_id, r.registration_type, r.region, r.district, r.settlement,
 			r.street, r.house_number, r.apartment_number, r.registration_date, 
 			COALESCE(r.deregistration_date, ''), COALESCE(r.basis_document, ''), r.is_active,
+			r.created_at, r.updated_at,
 			c.last_name, c.first_name, c.middle_name, c.birth_date, c.phone, c.tax_number` +
 			queryBase + " ORDER BY r.registration_date DESC"
 
@@ -207,6 +210,7 @@ func (s *RegistrationService) ListAll(search string, isActive *bool, page, limit
 				&item.ID, &item.CitizenID, &item.RegistrationType, &item.Region, &item.District, &item.Settlement,
 				&item.Street, &item.HouseNumber, &item.ApartmentNumber, &item.RegistrationDate,
 				&item.DeregistrationDate, &item.BasisDocument, &item.IsActive,
+				&item.CreatedAt, &item.UpdatedAt,
 				&lName, &fName, &mName, &item.CitizenBirth, &encPhone, &encTax,
 			)
 			if err != nil {
@@ -249,6 +253,7 @@ func (s *RegistrationService) ListAll(search string, isActive *bool, page, limit
 			r.id, r.citizen_id, r.registration_type, r.region, r.district, r.settlement,
 			r.street, r.house_number, r.apartment_number, r.registration_date, 
 			COALESCE(r.deregistration_date, ''), COALESCE(r.basis_document, ''), r.is_active,
+			r.created_at, r.updated_at,
 			c.last_name, c.first_name, c.middle_name, c.birth_date, c.phone, c.tax_number` +
 			queryBase + " ORDER BY r.registration_date DESC LIMIT ? OFFSET ?"
 
@@ -267,6 +272,7 @@ func (s *RegistrationService) ListAll(search string, isActive *bool, page, limit
 				&item.ID, &item.CitizenID, &item.RegistrationType, &item.Region, &item.District, &item.Settlement,
 				&item.Street, &item.HouseNumber, &item.ApartmentNumber, &item.RegistrationDate,
 				&item.DeregistrationDate, &item.BasisDocument, &item.IsActive,
+				&item.CreatedAt, &item.UpdatedAt,
 				&lName, &fName, &mName, &item.CitizenBirth, &encPhone, &encTax,
 			)
 			if err != nil {
