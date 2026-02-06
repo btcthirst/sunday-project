@@ -45,6 +45,7 @@ require (
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 // replace github.com/wailsapp/wails/v2 v2.11.0 => /home/min/go/pkg/mod

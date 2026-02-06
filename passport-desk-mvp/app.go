@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"passport-desk-mvp/internal/database"
+	"passport-desk-mvp/internal/logger"
 	"passport-desk-mvp/internal/security"
 	"passport-desk-mvp/internal/services"
 )
@@ -70,14 +72,44 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
+	// Отримати директорію для даних
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		configDir = "."
+	}
+	dataDir := filepath.Join(configDir, "passport-desk-mvp")
+
+	// Ініціалізувати logger
+	logConfig := logger.Config{
+		Level:      getLogLevel(),
+		LogDir:     filepath.Join(dataDir, "logs"),
+		LogFile:    "passport-desk.log",
+		MaxSize:    10, // 10 MB
+		MaxAge:     30, // 30 днів
+		MaxBackups: 10, // 10 backup файлів
+		Compress:   true,
+		Console:    isDevelopment(),
+		JSON:       false, // Text формат для читабельності
+	}
+
+	if err := logger.Init(logConfig); err != nil {
+		// Fallback на стандартний log якщо не вдалось ініціалізувати
+		panic("Failed to initialize logger: " + err.Error())
+	}
+
+	logger.Info("Application started",
+		slog.String("version", "1.0.0"),
+		slog.String("data_dir", dataDir),
+	)
+
 	// Ensure data directory exists
 	if err := a.keystore.EnsureDataDir(); err != nil {
-		println("Warning: failed to create data directory:", err.Error())
+		logger.Error("Failed to create data directory", slog.String("error", err.Error()))
 	}
 
 	// Run backup
 	if err := a.backupService.RunBackup(); err != nil {
-		println("Warning: failed to run backup:", err.Error())
+		logger.Error("Failed to run backup", slog.String("error", err.Error()))
 	}
 
 	// Start inactivity checker
@@ -86,13 +118,33 @@ func (a *App) startup(ctx context.Context) {
 
 // shutdown is called when the app is closing
 func (a *App) shutdown(ctx context.Context) {
+	logger.Info("Application shutting down")
 	if a.db != nil {
 		a.db.Close()
 	}
+	logger.Close()
+}
+
+// getLogLevel визначає рівень логування з environment або config
+func getLogLevel() string {
+	if level := os.Getenv("LOG_LEVEL"); level != "" {
+		return level
+	}
+	if isDevelopment() {
+		return "debug"
+	}
+	return "info"
+}
+
+// isDevelopment перевіряє чи це dev режим
+func isDevelopment() bool {
+	env := os.Getenv("ENV")
+	return env == "development" || env == "dev" || env == ""
 }
 
 // inactivityChecker monitors for inactivity and locks the app
 func (a *App) inactivityChecker() {
+	logger.Info("Inactivity checker started")
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -124,23 +176,28 @@ func (a *App) UpdateActivity() {
 
 // IsFirstRun checks if this is the first run (no database exists)
 func (a *App) IsFirstRun() bool {
+	logger.Info("Checking if this is the first run")
 	return !a.keystore.SaltExists()
 }
 
 // SetupInitialOperator creates the first operator and initializes the database
 func (a *App) SetupInitialOperator(username, password, fullName string) error {
+	logger.Info("Setting up initial operator")
 	if !a.IsFirstRun() {
+		logger.Error("Initial setup already completed")
 		return errors.New("initial setup already completed")
 	}
 
 	// Generate salt
 	salt, err := security.GenerateSalt()
 	if err != nil {
+		logger.Error("Failed to generate salt", slog.String("error", err.Error()))
 		return err
 	}
 
 	// Save salt
 	if err := a.keystore.SaveSalt(salt); err != nil {
+		logger.Error("Failed to save salt", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -151,6 +208,7 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 	// Initialize database
 	db, err := database.New(a.keystore.GetDBPath(), security.KeyToHex(key))
 	if err != nil {
+		logger.Error("Failed to initialize database", slog.String("error", err.Error()))
 		return err
 	}
 	a.db = db
@@ -162,6 +220,7 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 	// Hash password
 	passwordHash, err := security.HashPassword(password)
 	if err != nil {
+		logger.Error("Failed to hash password", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -172,6 +231,7 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 		FullName:     fullName,
 	}
 	if err := a.db.CreateOperator(operator); err != nil {
+		logger.Error("Failed to create operator", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -199,6 +259,7 @@ func (a *App) Login(username, password string) error {
 	// Load salt
 	salt, err := a.keystore.LoadSalt()
 	if err != nil {
+		logger.Error("Failed to load salt", slog.String("error", err.Error()))
 		return errors.New("database not initialized")
 	}
 
@@ -208,6 +269,7 @@ func (a *App) Login(username, password string) error {
 	// Try to open database with this key
 	db, err := database.New(a.keystore.GetDBPath(), security.KeyToHex(key))
 	if err != nil {
+		logger.Error("Failed to open database", slog.String("error", err.Error()))
 		return errors.New("неправильний пароль")
 	}
 
@@ -215,12 +277,14 @@ func (a *App) Login(username, password string) error {
 	operator, err := db.GetOperatorByUsername(username)
 	if err != nil {
 		db.Close()
+		logger.Error("Failed to get operator", slog.String("error", err.Error()))
 		return errors.New("користувача не знайдено")
 	}
 
 	// Verify password
 	if !security.VerifyPassword(operator.PasswordHash, password) {
 		db.Close()
+		logger.Error("Failed to verify password", slog.String("error", err.Error()))
 		return errors.New("неправильний пароль")
 	}
 
@@ -256,6 +320,7 @@ func (a *App) Login(username, password string) error {
 
 // Logout logs out the current operator
 func (a *App) Logout() {
+	logger.Info("Logging out")
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -284,16 +349,20 @@ func (a *App) Logout() {
 
 // Unlock unlocks the app with password (after auto-lock)
 func (a *App) Unlock(password string) error {
+	logger.Info("Unlocking")
 	a.mu.RLock()
 	operator := a.currentOperator
 	a.mu.RUnlock()
 
 	if operator == nil {
+		logger.Error("Not logged in")
 		return errors.New("not logged in")
 	}
 
 	if !security.VerifyPassword(operator.PasswordHash, password) {
-		return errors.New("неправильний пароль")
+		err := errors.New("неправильний пароль")
+		logger.Error("Failed to verify password", slog.String("error", err.Error()))
+		return err
 	}
 
 	a.mu.Lock()
@@ -306,6 +375,7 @@ func (a *App) Unlock(password string) error {
 
 // IsLocked returns whether the app is locked
 func (a *App) IsLocked() bool {
+	logger.Info("Checking if locked")
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.isLocked
@@ -313,6 +383,7 @@ func (a *App) IsLocked() bool {
 
 // IsAuthenticated returns whether a user is authenticated
 func (a *App) IsAuthenticated() bool {
+	logger.Info("Checking if authenticated")
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.currentOperator != nil && !a.isLocked
@@ -320,10 +391,12 @@ func (a *App) IsAuthenticated() bool {
 
 // GetCurrentOperator returns the current operator info
 func (a *App) GetCurrentOperator() *OperatorInfo {
+	logger.Info("Getting current operator")
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
 	if a.currentOperator == nil {
+		logger.Error("Not logged in")
 		return nil
 	}
 
@@ -346,6 +419,7 @@ type OperatorInfo struct {
 // CreateCitizen creates a new citizen
 func (a *App) CreateCitizen(input services.CitizenInput) (*services.CitizenOutput, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("CreateCitizen: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -366,6 +440,7 @@ func (a *App) CreateCitizen(input services.CitizenInput) (*services.CitizenOutpu
 // GetCitizen retrieves a citizen by ID
 func (a *App) GetCitizen(id int64) (*services.CitizenOutput, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("GetCitizen: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -386,6 +461,7 @@ func (a *App) GetCitizen(id int64) (*services.CitizenOutput, error) {
 // UpdateCitizen updates a citizen
 func (a *App) UpdateCitizen(id int64, input services.CitizenInput) error {
 	if !a.IsAuthenticated() {
+		logger.Error("UpdateCitizen: Not authenticated")
 		return errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -406,6 +482,7 @@ func (a *App) UpdateCitizen(id int64, input services.CitizenInput) error {
 // DeleteCitizen soft deletes a citizen
 func (a *App) DeleteCitizen(id int64) error {
 	if !a.IsAuthenticated() {
+		logger.Error("DeleteCitizen: Not authenticated")
 		return errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -426,6 +503,7 @@ func (a *App) DeleteCitizen(id int64) error {
 // RestoreCitizen restores a soft-deleted citizen
 func (a *App) RestoreCitizen(id int64) error {
 	if !a.IsAuthenticated() {
+		logger.Error("RestoreCitizen: Not authenticated")
 		return errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -446,6 +524,7 @@ func (a *App) RestoreCitizen(id int64) error {
 // AddFamilyMember adds a connection between citizens
 func (a *App) AddFamilyMember(citizenID, memberID int64, relationType string) error {
 	if !a.IsAuthenticated() {
+		logger.Error("AddFamilyMember: Not authenticated")
 		return errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -455,6 +534,7 @@ func (a *App) AddFamilyMember(citizenID, memberID int64, relationType string) er
 // RemoveFamilyMember removes a connection
 func (a *App) RemoveFamilyMember(citizenID, memberID int64) error {
 	if !a.IsAuthenticated() {
+		logger.Error("RemoveFamilyMember: Not authenticated")
 		return errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -464,6 +544,7 @@ func (a *App) RemoveFamilyMember(citizenID, memberID int64) error {
 // GetFamilyMembers returns family members
 func (a *App) GetFamilyMembers(citizenID int64) ([]services.FamilyMemberOutput, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("GetFamilyMembers: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -473,6 +554,7 @@ func (a *App) GetFamilyMembers(citizenID int64) ([]services.FamilyMemberOutput, 
 // SearchCitizens searches citizens by field
 func (a *App) SearchCitizens(query string, field string) ([]services.CitizenOutput, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("SearchCitizens: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -482,6 +564,7 @@ func (a *App) SearchCitizens(query string, field string) ([]services.CitizenOutp
 // ListCitizens returns paginated citizens
 func (a *App) ListCitizens(page, limit int, includeDeleted bool) (*services.CitizenListResult, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("ListCitizens: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -494,6 +577,7 @@ func (a *App) ListCitizens(page, limit int, includeDeleted bool) (*services.Citi
 // CreateRegistration creates a new registration
 func (a *App) CreateRegistration(input database.RegistrationInput) (*database.RegistrationOutput, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("CreateRegistration: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -514,6 +598,7 @@ func (a *App) CreateRegistration(input database.RegistrationInput) (*database.Re
 // GetRegistrationHistory returns registration history for a citizen
 func (a *App) GetRegistrationHistory(citizenID int64) ([]database.RegistrationOutput, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("GetRegistrationHistory: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -523,6 +608,7 @@ func (a *App) GetRegistrationHistory(citizenID int64) ([]database.RegistrationOu
 // DeregisterCitizen deactivates a registration
 func (a *App) DeregisterCitizen(id int64, date string) error {
 	if !a.IsAuthenticated() {
+		logger.Error("DeregisterCitizen: Not authenticated")
 		return errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -545,6 +631,7 @@ func (a *App) DeregisterCitizen(id int64, date string) error {
 // GenerateCitizenCertificate generates a registration certificate for a citizen and saves it
 func (a *App) GenerateCitizenCertificate(citizenID int64, opts services.FamilyCertificateOptions) (string, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("GenerateCitizenCertificate: Not authenticated")
 		return "", errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -576,17 +663,20 @@ func (a *App) GenerateCitizenCertificate(citizenID int64, opts services.FamilyCe
 
 	base64Data, err := a.reportService.GenerateRegistrationCertificate(citizenID, opts)
 	if err != nil {
+		logger.Error("Failed to generate certificate", slog.String("error", err.Error()))
 		return "", err
 	}
 
 	// Decode PDF
 	pdfBytes, err := base64.StdEncoding.DecodeString(base64Data)
 	if err != nil {
+		logger.Error("Failed to decode PDF", slog.String("error", err.Error()))
 		return "", fmt.Errorf("failed to decode PDF: %w", err)
 	}
 
 	// Save to selected file
 	if err := os.WriteFile(filepath, pdfBytes, 0644); err != nil {
+		logger.Error("Failed to save file", slog.String("error", err.Error()))
 		return "", fmt.Errorf("failed to save file: %w", err)
 	}
 
@@ -596,6 +686,7 @@ func (a *App) GenerateCitizenCertificate(citizenID int64, opts services.FamilyCe
 // ExportCitizens exports registered citizens to Excel and saves it
 func (a *App) ExportCitizens(from, to string) (string, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("ExportCitizens: Not authenticated")
 		return "", errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -610,9 +701,11 @@ func (a *App) ExportCitizens(from, to string) (string, error) {
 		},
 	})
 	if err != nil {
+		logger.Error("Failed to open save dialog", slog.String("error", err.Error()))
 		return "", err
 	}
 	if filepath == "" {
+		logger.Info("User cancelled export")
 		return "cancelled", nil // User cancelled
 	}
 
@@ -625,17 +718,20 @@ func (a *App) ExportCitizens(from, to string) (string, error) {
 
 	base64Data, err := a.reportService.ExportRegisteredCitizens(from, to)
 	if err != nil {
+		logger.Error("Failed to export citizens", slog.String("error", err.Error()))
 		return "", err
 	}
 
 	// Decode Excel
 	xlsxBytes, err := base64.StdEncoding.DecodeString(base64Data)
 	if err != nil {
+		logger.Error("Failed to decode Excel", slog.String("error", err.Error()))
 		return "", fmt.Errorf("failed to decode Excel: %w", err)
 	}
 
 	// Save file
 	if err := os.WriteFile(filepath, xlsxBytes, 0644); err != nil {
+		logger.Error("Failed to save file", slog.String("error", err.Error()))
 		return "", fmt.Errorf("failed to save file: %w", err)
 	}
 
@@ -645,6 +741,7 @@ func (a *App) ExportCitizens(from, to string) (string, error) {
 // ExportCitizensToExcel exports all citizens to Excel file
 func (a *App) ExportCitizensToExcel() (string, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("ExportCitizensToExcel: Not authenticated")
 		return "", errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -657,15 +754,18 @@ func (a *App) ExportCitizensToExcel() (string, error) {
 		},
 	})
 	if err != nil || filepath == "" {
+		logger.Error("Failed to open save dialog", slog.String("error", err.Error()))
 		return "cancelled", err
 	}
 
 	data, err := a.importExportService.ExportToExcel()
 	if err != nil {
+		logger.Error("Failed to export citizens", slog.String("error", err.Error()))
 		return "", err
 	}
 
 	if err := os.WriteFile(filepath, data, 0644); err != nil {
+		logger.Error("Failed to save file", slog.String("error", err.Error()))
 		return "", err
 	}
 
@@ -693,11 +793,13 @@ func (a *App) ImportCitizens() (int, error) {
 		},
 	})
 	if err != nil || filepath == "" {
+		logger.Error("Failed to open save dialog", slog.String("error", err.Error()))
 		return 0, err
 	}
 
 	data, err := os.ReadFile(filepath)
 	if err != nil {
+		logger.Error("Failed to read file", slog.String("error", err.Error()))
 		return 0, err
 	}
 
@@ -733,15 +835,18 @@ func (a *App) ExportCustomCitizensToExcel(ids []int64, columns []string) (string
 		},
 	})
 	if err != nil || filepath == "" {
+		logger.Error("Failed to open save dialog", slog.String("error", err.Error()))
 		return "cancelled", err
 	}
 
 	data, err := a.importExportService.ExportCustomToExcel(ids, columns)
 	if err != nil {
+		logger.Error("Failed to export citizens", slog.String("error", err.Error()))
 		return "", err
 	}
 
 	if err := os.WriteFile(filepath, data, 0644); err != nil {
+		logger.Error("Failed to save file", slog.String("error", err.Error()))
 		return "", err
 	}
 
@@ -767,6 +872,7 @@ func (a *App) GetDashboardStats() (*services.StatsOutput, error) {
 // GetAuditLogs returns recent audit logs
 func (a *App) GetAuditLogs(limit int) ([]database.AuditLogOutput, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("GetAuditLogs: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -779,6 +885,7 @@ func (a *App) GetAuditLogs(limit int) ([]database.AuditLogOutput, error) {
 // GenerateFamilyStatusCertificate generates a custom family certificate and saves it
 func (a *App) GenerateFamilyStatusCertificate(opts services.FamilyCertificateOptions) (string, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("GenerateFamilyStatusCertificate: Not authenticated")
 		return "", errors.New("unauthorized")
 	}
 	a.UpdateActivity()
@@ -797,9 +904,11 @@ func (a *App) GenerateFamilyStatusCertificate(opts services.FamilyCertificateOpt
 		},
 	})
 	if err != nil {
+		logger.Error("Failed to open save dialog", slog.String("error", err.Error()))
 		return "", err
 	}
 	if filepath == "" {
+		logger.Info("User cancelled export")
 		return "cancelled", nil
 	}
 
@@ -813,17 +922,20 @@ func (a *App) GenerateFamilyStatusCertificate(opts services.FamilyCertificateOpt
 
 	base64Data, err := a.reportService.GenerateFamilyStatusCertificate(opts)
 	if err != nil {
+		logger.Error("Failed to generate certificate", slog.String("error", err.Error()))
 		return "", err
 	}
 
 	// Decode PDF
 	pdfBytes, err := base64.StdEncoding.DecodeString(base64Data)
 	if err != nil {
+		logger.Error("Failed to decode PDF", slog.String("error", err.Error()))
 		return "", fmt.Errorf("failed to decode PDF: %w", err)
 	}
 
 	// Save to selected file
 	if err := os.WriteFile(filepath, pdfBytes, 0644); err != nil {
+		logger.Error("Failed to save file", slog.String("error", err.Error()))
 		return "", fmt.Errorf("failed to save file: %w", err)
 	}
 
@@ -831,6 +943,7 @@ func (a *App) GenerateFamilyStatusCertificate(opts services.FamilyCertificateOpt
 }
 func (a *App) ListRegistrations(search string, isActive *bool, page, limit int) (*services.RegistrationListResult, error) {
 	if !a.IsAuthenticated() {
+		logger.Error("ListRegistrations: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
 	a.UpdateActivity()
