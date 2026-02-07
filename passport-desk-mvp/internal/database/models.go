@@ -11,7 +11,7 @@ type Operator struct {
 	FullName     string    `json:"full_name"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-}*/
+}
 
 // Citizen represents a citizen record
 type Citizen struct {

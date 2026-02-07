@@ -53,3 +53,19 @@ type RegistrationOutput struct {
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
+
+type RegistrationListItem struct {
+	RegistrationOutput
+	CitizenName  string `json:"citizen_name"`
+	CitizenBirth string `json:"citizen_birth"`
+	CitizenPhone string `json:"citizen_phone"`
+	CitizenTax   string `json:"citizen_tax"`
+}
+
+type RegistrationListResult struct {
+	Items      []RegistrationListItem `json:"items"`
+	Total      int                    `json:"total"`
+	Page       int                    `json:"page"`
+	Limit      int                    `json:"limit"`
+	TotalPages int                    `json:"total_pages"`
+}

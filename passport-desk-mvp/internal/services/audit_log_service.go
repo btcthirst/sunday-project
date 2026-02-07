@@ -1,8 +1,8 @@
 package services
 
 import (
+	"context"
 	"errors"
-	"passport-desk-mvp/internal/logger"
 	"passport-desk-mvp/internal/models"
 	"passport-desk-mvp/internal/repository"
 )
@@ -12,15 +12,27 @@ type AuditLogService struct {
 	sessionService *SessionService
 }
 
+// NewAuditLogService creates a new audit log service
+func NewAuditLogService(auditLogRepo *repository.AuditLogRepository, sessionService *SessionService) *AuditLogService {
+	return &AuditLogService{auditLogRepo: auditLogRepo, sessionService: sessionService}
+}
+
+func (s *AuditLogService) LogAudit(ctx context.Context, log *models.AuditLog) error {
+	if !s.sessionService.IsAuthenticated() {
+		return errors.New("not authenticated")
+	}
+	s.sessionService.UpdateActivity()
+	return s.auditLogRepo.LogAudit(ctx, log)
+}
+
 // GetAuditLogs returns recent audit logs
-func (a *AuditLogService) GetAuditLogs(limit int) ([]models.AuditLogOutput, error) {
-	if !a.sessionService.IsAuthenticated() {
-		logger.Error("GetAuditLogs: Not authenticated")
+func (s *AuditLogService) GetAuditLogs(ctx context.Context, limit int) ([]models.AuditLogOutput, error) {
+	if !s.sessionService.IsAuthenticated() {
 		return nil, errors.New("unauthorized")
 	}
-	a.sessionService.UpdateActivity()
+	s.sessionService.UpdateActivity()
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	return a.auditLogRepo.GetAuditLogs(limit)
+	return s.auditLogRepo.GetAuditLogs(ctx, limit)
 }

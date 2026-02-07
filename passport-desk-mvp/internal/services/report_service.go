@@ -2,40 +2,83 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
 
 	"passport-desk-mvp/internal/assets"
-	"passport-desk-mvp/internal/database"
+	"passport-desk-mvp/internal/models"
+	"passport-desk-mvp/internal/repository"
 
 	"github.com/jung-kurt/gofpdf"
 	"github.com/xuri/excelize/v2"
 )
 
 type ReportService struct {
-	db             *database.Database
+	repo           *repository.ReportRepository
 	citizenService *CitizenService      // Needed to get citizen details for certificate
 	regService     *RegistrationService // Needed to get registration details
 }
 
-type FamilyCertificateOptions struct {
-	CitizenIDs        []int64 `json:"citizen_ids"`
-	IssuerName        string  `json:"issuer_name"`
-	TargetInstitution string  `json:"target_institution"`
-	Purpose           string  `json:"purpose"`
-	SignatoryTitle    string  `json:"signatory_title"`
-	SignatoryName     string  `json:"signatory_name"`
-	City              string  `json:"city"`
-}
-
-func NewReportService(db *database.Database, cs *CitizenService, rs *RegistrationService) *ReportService {
+func NewReportService(repo *repository.ReportRepository, cs *CitizenService, rs *RegistrationService) *ReportService {
 	return &ReportService{
-		db:             db,
+		repo:           repo,
 		citizenService: cs,
 		regService:     rs,
 	}
+}
+
+func (s *ReportService) ExportRegisteredCitizens(ctx context.Context, from, to string) (string, error) {
+	f := excelize.NewFile()
+	defer f.Close()
+
+	// Create a new sheet.
+	index, err := f.NewSheet("Sheet1")
+	if err != nil {
+		return "", err
+	}
+
+	// Set headers
+	headers := []string{"ID", "ПІБ", "Дата народження", "Адреса", "Дата реєстрації", "Тип"}
+	for i, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue("Sheet1", cell, h)
+	}
+
+	citizens, err := s.repo.ExportRegisteredCitizens(ctx, from, to)
+	if err != nil {
+		return "", err
+	}
+
+	for i, citizen := range citizens {
+		cell, _ := excelize.CoordinatesToCellName(i+2, 1)
+		f.SetCellValue("Sheet1", cell, citizen.ID)
+		cell, _ = excelize.CoordinatesToCellName(i+2, 2)
+		f.SetCellValue("Sheet1", cell, citizen.LastName+" "+citizen.FirstName+" "+citizen.MiddleName)
+		cell, _ = excelize.CoordinatesToCellName(i+2, 3)
+		f.SetCellValue("Sheet1", cell, citizen.BirthDate)
+		cell, _ = excelize.CoordinatesToCellName(i+2, 4)
+		f.SetCellValue("Sheet1", cell, citizen.ActiveAddress)
+		cell, _ = excelize.CoordinatesToCellName(i+2, 5)
+		f.SetCellValue("Sheet1", cell, citizen.Phone)
+		cell, _ = excelize.CoordinatesToCellName(i+2, 6)
+		f.SetCellValue("Sheet1", cell, citizen.Email)
+	}
+
+	f.SetActiveSheet(index)
+
+	var buf bytes.Buffer
+	if err := f.Write(&buf); err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+}
+
+func (s *ReportService) GetStats() (*models.StatsOutput, error) {
+	return s.repo.GetStats()
 }
 
 func (s *ReportService) formatInitials(name string) string {
@@ -66,28 +109,21 @@ func (s *ReportService) loadFontBytes(assetPath string) ([]byte, error) {
 	return data, nil
 }
 
-type StatsOutput struct {
-	TotalCitizens       int `json:"total_citizens"`
-	TotalRegistrations  int `json:"total_registrations"`
-	ActiveRegistrations int `json:"active_registrations"`
-	NewThisMonth        int `json:"new_this_month"`
-}
-
 // GenerateRegistrationCertificate generates a PDF certificate for a citizen's active registration
-func (s *ReportService) GenerateRegistrationCertificate(citizenID int64, opts FamilyCertificateOptions) (string, error) {
+func (s *ReportService) GenerateRegistrationCertificate(ctx context.Context, citizenID int64, opts models.FamilyCertificateOptions) (string, error) {
 	// 1. Get Citizen Data
-	citizen, err := s.citizenService.GetByID(citizenID)
+	citizen, err := s.citizenService.GetByID(ctx, citizenID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get citizen: %w", err)
 	}
 
 	// 2. Get Active Registration
-	regs, err := s.regService.GetByCitizenID(citizenID)
+	regs, err := s.regService.GetByCitizenID(ctx, citizenID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get registrations: %w", err)
 	}
 
-	var activeReg *database.RegistrationOutput
+	var activeReg *models.RegistrationOutput
 	for _, r := range regs {
 		if r.IsActive {
 			activeReg = &r
@@ -146,117 +182,16 @@ func (s *ReportService) GenerateRegistrationCertificate(citizenID int64, opts Fa
 	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
-// ExportRegisteredCitizens generates an Excel file with registered citizens
-func (s *ReportService) ExportRegisteredCitizens(from, to string) (string, error) {
-	f := excelize.NewFile()
-	defer f.Close()
-
-	// Create a new sheet.
-	index, err := f.NewSheet("Sheet1")
-	if err != nil {
-		return "", err
-	}
-
-	// Set headers
-	headers := []string{"ID", "ПІБ", "Дата народження", "Адреса", "Дата реєстрації", "Тип"}
-	for i, h := range headers {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
-		f.SetCellValue("Sheet1", cell, h)
-	}
-
-	// Query data (simplified for now, ideally strictly filtered by date)
-	// We need a Join query here usually, or fetch all and filter.
-	// For MVP, let's fetch list and filter in memory or use a new query in DB.
-	// We will use existing ListCitizens to get a batch (not efficient for export)
-	// or add a dedicated method in `CitizenService` or just query DB directly here.
-	// Direct DB query is better for reports.
-
-	query := `
-		SELECT c.id, c.last_name, c.first_name, c.middle_name, c.birth_date,
-		       r.region, r.settlement, r.street, r.house_number, r.registration_date, r.registration_type
-		FROM registrations r
-		JOIN citizens c ON r.citizen_id = c.id
-		WHERE r.registration_date >= ? AND r.registration_date <= ?
-	`
-	// Handle empty dates (all time)
-	if from == "" {
-		from = "1900-01-01"
-	}
-	if to == "" {
-		to = "2100-01-01"
-	}
-
-	rows, err := s.db.DB().Query(query, from, to)
-	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
-
-	rowIdx := 2
-	for rows.Next() {
-		var id int64
-		var ln, fn, mn, bd, reg, set, str, hn, rdate, rtype string
-		if err := rows.Scan(&id, &ln, &fn, &mn, &bd, &reg, &set, &str, &hn, &rdate, &rtype); err != nil {
-			continue
-		}
-
-		f.SetCellValue("Sheet1", fmt.Sprintf("A%d", rowIdx), id)
-		f.SetCellValue("Sheet1", fmt.Sprintf("B%d", rowIdx), fmt.Sprintf("%s %s %s", ln, fn, mn))
-		f.SetCellValue("Sheet1", fmt.Sprintf("C%d", rowIdx), bd)
-		f.SetCellValue("Sheet1", fmt.Sprintf("D%d", rowIdx), fmt.Sprintf("%s, %s, %s", set, str, hn))
-		f.SetCellValue("Sheet1", fmt.Sprintf("E%d", rowIdx), rdate)
-		f.SetCellValue("Sheet1", fmt.Sprintf("F%d", rowIdx), rtype)
-		rowIdx++
-	}
-
-	f.SetActiveSheet(index)
-
-	var buf bytes.Buffer
-	if err := f.Write(&buf); err != nil {
-		return "", err
-	}
-
-	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
-}
-
-// GetStats returns dashboard statistics
-func (s *ReportService) GetStats() (*StatsOutput, error) {
-	stats := &StatsOutput{}
-
-	// Total Citizens
-	if err := s.db.DB().QueryRow("SELECT COUNT(*) FROM citizens WHERE deleted = 0").Scan(&stats.TotalCitizens); err != nil {
-		return nil, err
-	}
-
-	// Total Registrations
-	if err := s.db.DB().QueryRow("SELECT COUNT(*) FROM registrations").Scan(&stats.TotalRegistrations); err != nil {
-		return nil, err
-	}
-
-	// Active Registrations
-	if err := s.db.DB().QueryRow("SELECT COUNT(*) FROM registrations WHERE is_active = 1").Scan(&stats.ActiveRegistrations); err != nil {
-		return nil, err
-	}
-
-	// New This Month
-	startOfMonth := time.Now().Format("2006-01") + "-01"
-	if err := s.db.DB().QueryRow("SELECT COUNT(*) FROM registrations WHERE registration_date >= ?", startOfMonth).Scan(&stats.NewThisMonth); err != nil {
-		return nil, err
-	}
-
-	return stats, nil
-}
-
 // GenerateFamilyStatusCertificate generates a PDF with a list of citizens and selected columns
-func (s *ReportService) GenerateFamilyStatusCertificate(opts FamilyCertificateOptions) (string, error) {
+func (s *ReportService) GenerateFamilyStatusCertificate(ctx context.Context, opts models.FamilyCertificateOptions) (string, error) {
 	if len(opts.CitizenIDs) == 0 {
 		return "", fmt.Errorf("no citizens selected")
 	}
 
 	// 1. Get Citizens Data
-	var citizens []*CitizenOutput
+	var citizens []*models.CitizenOutput
 	for _, id := range opts.CitizenIDs {
-		c, err := s.citizenService.GetByID(id)
+		c, err := s.citizenService.GetByID(ctx, id)
 		if err != nil {
 			return "", fmt.Errorf("failed to get citizen %d: %w", id, err)
 		}
@@ -312,7 +247,7 @@ func (s *ReportService) GenerateFamilyStatusCertificate(opts FamilyCertificateOp
 
 	// Get active registration address for primary citizen
 	address := "____________________"
-	regs, _ := s.regService.GetByCitizenID(primary.ID)
+	regs, _ := s.regService.GetByCitizenID(ctx, primary.ID)
 	for _, r := range regs {
 		if r.IsActive {
 			address = fmt.Sprintf("%s, %s, буд. %s", r.Settlement, r.Street, r.HouseNumber)
@@ -339,7 +274,7 @@ func (s *ReportService) GenerateFamilyStatusCertificate(opts FamilyCertificateOp
 			// We need to fetch family members to get relation type.
 			// But GenerateFamilyStatusCertificate only receives IDs.
 			// Let's fetch primary's members and match.
-			mems, _ := s.citizenService.GetFamilyMembers(primary.ID)
+			mems, _ := s.citizenService.GetFamilyMembers(ctx, primary.ID)
 			for _, m := range mems {
 				if m.ID == c.ID {
 					relation = m.RelationType
@@ -418,7 +353,7 @@ func (s *ReportService) getColumnLabel(col string) string {
 	}
 }
 
-func (s *ReportService) getColumnValue(c *CitizenOutput, col string) string {
+func (s *ReportService) getColumnValue(ctx context.Context, c *models.CitizenOutput, col string) string {
 	switch col {
 	case "birth_date":
 		return c.BirthDate
@@ -433,7 +368,7 @@ func (s *ReportService) getColumnValue(c *CitizenOutput, col string) string {
 		return c.GenderDisplay
 	case "address":
 		// Get active registration address
-		regs, err := s.regService.GetByCitizenID(c.ID)
+		regs, err := s.regService.GetByCitizenID(ctx, c.ID)
 		if err != nil || len(regs) == 0 {
 			return "-"
 		}

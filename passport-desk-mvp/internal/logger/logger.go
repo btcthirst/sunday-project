@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"os"
@@ -139,4 +140,8 @@ func WithContext(fields ...slog.Attr) *slog.Logger {
 		args = append(args, field)
 	}
 	return Log.With(args...)
+}
+
+func FromContext(ctx context.Context) *slog.Logger {
+	return ctx.Value("logger").(*slog.Logger)
 }

@@ -3,19 +3,16 @@ package services
 import (
 	"bytes"
 	"fmt"
-	"passport-desk-mvp/internal/database"
 
 	"github.com/xuri/excelize/v2"
 )
 
 type ImportExportService struct {
-	db             *database.Database
 	citizenService *CitizenService
 }
 
-func NewImportExportService(db *database.Database, cs *CitizenService) *ImportExportService {
+func NewImportExportService(cs *CitizenService) *ImportExportService {
 	return &ImportExportService{
-		db:             db,
 		citizenService: cs,
 	}
 }

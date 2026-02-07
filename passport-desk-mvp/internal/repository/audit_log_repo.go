@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"passport-desk-mvp/internal/database"
 	"passport-desk-mvp/internal/models"
@@ -15,8 +16,12 @@ func NewAuditLogRepository(db *database.Database) *AuditLogRepository {
 }
 
 // LogAudit creates an audit log entry
-func (a *AuditLogRepository) LogAudit(log *models.AuditLog) error {
-	_, err := a.db.DB().Exec(
+func (a *AuditLogRepository) LogAudit(ctx context.Context, log *models.AuditLog) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := a.db.DB().ExecContext(
+		ctx,
 		`INSERT INTO audit_log (operator_id, action_type, table_name, record_id, description) VALUES (?, ?, ?, ?, ?)`,
 		log.OperatorID, log.ActionType, log.TableName, log.RecordID, log.Description,
 	)
@@ -24,13 +29,20 @@ func (a *AuditLogRepository) LogAudit(log *models.AuditLog) error {
 }
 
 // GetAuditLogs retrieves recent audit logs
-func (d *AuditLogRepository) GetAuditLogs(limit int) ([]models.AuditLogOutput, error) {
-	rows, err := d.db.DB().Query(`
+func (d *AuditLogRepository) GetAuditLogs(ctx context.Context, limit int) ([]models.AuditLogOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rows, err := d.db.DB().QueryContext(
+		ctx,
+		`
 		SELECT a.id, a.timestamp, a.operator_id, a.action_type, a.table_name, a.record_id, a.description, a.updated_at, o.full_name
 		FROM audit_log a
 		LEFT JOIN operators o ON a.operator_id = o.id
 		ORDER BY a.timestamp DESC
-		LIMIT ?`, limit)
+		LIMIT ?`,
+		limit,
+	)
 	if err != nil {
 		return nil, err
 	}
