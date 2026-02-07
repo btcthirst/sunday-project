@@ -2,6 +2,7 @@ package database
 
 import "time"
 
+/*
 // Operator represents a system operator
 type Operator struct {
 	ID           int64     `json:"id"`
@@ -10,7 +11,7 @@ type Operator struct {
 	FullName     string    `json:"full_name"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-}
+}*/
 
 // Citizen represents a citizen record
 type Citizen struct {
@@ -86,6 +87,7 @@ type RegistrationOutput struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
+/*
 // AuditLog represents an audit trail entry
 type AuditLog struct {
 	ID          int64     `json:"id"`
@@ -102,7 +104,7 @@ type AuditLog struct {
 type AuditLogOutput struct {
 	AuditLog
 	OperatorName string `json:"operator_name"`
-}
+}*/
 
 // Certificate represents an issued certificate
 type Certificate struct {

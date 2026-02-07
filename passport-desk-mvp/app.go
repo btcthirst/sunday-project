@@ -8,20 +8,16 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"passport-desk-mvp/internal/database"
 	"passport-desk-mvp/internal/logger"
+	"passport-desk-mvp/internal/models"
+	"passport-desk-mvp/internal/repository"
 	"passport-desk-mvp/internal/security"
 	"passport-desk-mvp/internal/services"
-)
-
-const (
-	// Auto-lock after 5 minutes of inactivity as per TZ
-	inactivityTimeout = 5 * time.Minute
 )
 
 // App struct holds the application state
@@ -32,6 +28,8 @@ type App struct {
 	db       *database.Database
 	keystore *security.Keystore
 	crypto   *security.Crypto
+	// Repositories
+	auditLogRepo *repository.AuditLogRepository
 
 	// Services
 	citizenService      *services.CitizenService
@@ -39,13 +37,8 @@ type App struct {
 	reportService       *services.ReportService
 	backupService       *services.BackupService
 	importExportService *services.ImportExportService
-
-	// Session state
-	mu              sync.RWMutex
-	currentOperator *database.Operator
-	isLocked        bool
-	lastActivity    time.Time
-	encryptionKey   []byte
+	sessionService      *services.SessionService
+	operatorService     *services.OperatorService
 
 	// Data directory
 	dataDir string
@@ -59,12 +52,14 @@ func NewApp() *App {
 		configDir = "."
 	}
 	dataDir := filepath.Join(configDir, "passport-desk-mvp")
+	sessionService := services.NewSessionService(nil)
 
 	return &App{
-		dataDir:       dataDir,
-		keystore:      security.NewKeystore(dataDir),
-		backupService: services.NewBackupService(dataDir),
-		isLocked:      true,
+		dataDir:         dataDir,
+		keystore:        security.NewKeystore(dataDir),
+		backupService:   services.NewBackupService(dataDir),
+		sessionService:  sessionService,
+		operatorService: services.NewOperatorService(sessionService, repository.NewOperatorRepository(nil)),
 	}
 }
 
@@ -113,7 +108,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	// Start inactivity checker
-	go a.inactivityChecker()
+	go a.sessionService.InactivityChecker()
 }
 
 // shutdown is called when the app is closing
@@ -140,36 +135,6 @@ func getLogLevel() string {
 func isDevelopment() bool {
 	env := os.Getenv("ENV")
 	return env == "development" || env == "dev" || env == ""
-}
-
-// inactivityChecker monitors for inactivity and locks the app
-func (a *App) inactivityChecker() {
-	logger.Info("Inactivity checker started")
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			a.mu.Lock()
-			if !a.isLocked && a.currentOperator != nil {
-				if time.Since(a.lastActivity) > inactivityTimeout {
-					a.isLocked = true
-					runtime.EventsEmit(a.ctx, "session-locked")
-				}
-			}
-			a.mu.Unlock()
-		case <-a.ctx.Done():
-			return
-		}
-	}
-}
-
-// UpdateActivity updates the last activity timestamp
-func (a *App) UpdateActivity() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.lastActivity = time.Now()
 }
 
 // --- Authentication Methods ---
@@ -203,7 +168,7 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 
 	// Derive encryption key
 	key := security.DeriveKey(password, salt)
-	a.encryptionKey = key
+	a.sessionService.EncryptionKey = key
 
 	// Initialize database
 	db, err := database.New(a.keystore.GetDBPath(), security.KeyToHex(key))
@@ -212,6 +177,7 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 		return err
 	}
 	a.db = db
+	a.auditLogRepo = repository.NewAuditLogRepository(db)
 	a.crypto = security.NewCrypto(key)
 	a.citizenService = services.NewCitizenService(db, a.crypto)
 	a.registrationService = services.NewRegistrationService(db, a.crypto)
@@ -225,18 +191,18 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 	}
 
 	// Create operator
-	operator := &database.Operator{
+	operator := &models.Operator{
 		Username:     username,
 		PasswordHash: passwordHash,
 		FullName:     fullName,
 	}
-	if err := a.db.CreateOperator(operator); err != nil {
+	if err := a.operatorService.CreateOperator(a.ctx, operator); err != nil {
 		logger.Error("Failed to create operator", slog.String("error", err.Error()))
 		return err
 	}
 
 	// Log to audit
-	a.db.LogAudit(&database.AuditLog{
+	a.auditLogRepo.LogAudit(&models.AuditLog{
 		OperatorID:  operator.ID,
 		ActionType:  "CREATE",
 		TableName:   "operators",
@@ -245,11 +211,11 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 	})
 
 	// Set session
-	a.mu.Lock()
-	a.currentOperator = operator
-	a.isLocked = false
-	a.lastActivity = time.Now()
-	a.mu.Unlock()
+	a.sessionService.Mu.Lock()
+	a.sessionService.CurrentOperator = operator
+	a.sessionService.IsLocked = false
+	a.sessionService.LastActivity = time.Now()
+	a.sessionService.Mu.Unlock()
 
 	return nil
 }
@@ -274,7 +240,7 @@ func (a *App) Login(username, password string) error {
 	}
 
 	// Get operator
-	operator, err := db.GetOperatorByUsername(username)
+	operator, err := a.operatorService.GetOperatorByUsername(a.ctx, username)
 	if err != nil {
 		db.Close()
 		logger.Error("Failed to get operator", slog.String("error", err.Error()))
@@ -284,30 +250,31 @@ func (a *App) Login(username, password string) error {
 	// Verify password
 	if !security.VerifyPassword(operator.PasswordHash, password) {
 		db.Close()
+		err = errors.New("неправильний пароль")
 		logger.Error("Failed to verify password", slog.String("error", err.Error()))
-		return errors.New("неправильний пароль")
+		return err
 	}
 
 	// Success - update state
-	a.mu.Lock()
+	a.sessionService.Mu.Lock()
 	if a.db != nil {
 		a.db.Close()
 	}
 	a.db = db
-	a.encryptionKey = key
+	a.sessionService.EncryptionKey = key
 	a.crypto = security.NewCrypto(key)
 	a.citizenService = services.NewCitizenService(db, a.crypto)
 	a.registrationService = services.NewRegistrationService(db, a.crypto)
 	a.reportService = services.NewReportService(a.db, a.citizenService, a.registrationService)
 	a.backupService = services.NewBackupService(a.dataDir)
 	a.importExportService = services.NewImportExportService(a.db, a.citizenService)
-	a.currentOperator = operator
-	a.isLocked = false
-	a.lastActivity = time.Now()
-	a.mu.Unlock()
+	a.sessionService.CurrentOperator = operator
+	a.sessionService.IsLocked = false
+	a.sessionService.LastActivity = time.Now()
+	a.sessionService.Mu.Unlock()
 
 	// Log to audit
-	a.db.LogAudit(&database.AuditLog{
+	a.auditLogRepo.LogAudit(&models.AuditLog{
 		OperatorID:  operator.ID,
 		ActionType:  "READ",
 		TableName:   "operators",
@@ -321,21 +288,21 @@ func (a *App) Login(username, password string) error {
 // Logout logs out the current operator
 func (a *App) Logout() {
 	logger.Info("Logging out")
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.sessionService.Mu.Lock()
+	defer a.sessionService.Mu.Unlock()
 
-	if a.currentOperator != nil && a.db != nil {
-		a.db.LogAudit(&database.AuditLog{
-			OperatorID:  a.currentOperator.ID,
+	if a.sessionService.CurrentOperator != nil && a.db != nil {
+		a.auditLogRepo.LogAudit(&models.AuditLog{
+			OperatorID:  a.sessionService.CurrentOperator.ID,
 			ActionType:  "READ",
 			TableName:   "operators",
-			RecordID:    a.currentOperator.ID,
+			RecordID:    a.sessionService.CurrentOperator.ID,
 			Description: "Operator logged out",
 		})
 	}
 
-	a.currentOperator = nil
-	a.isLocked = true
+	a.sessionService.CurrentOperator = nil
+	a.sessionService.IsLocked = true
 	if a.db != nil {
 		a.db.Close()
 		a.db = nil
@@ -344,15 +311,15 @@ func (a *App) Logout() {
 	a.citizenService = nil
 	a.registrationService = nil
 	a.reportService = nil
-	a.encryptionKey = nil
+	a.sessionService.EncryptionKey = nil
 }
 
 // Unlock unlocks the app with password (after auto-lock)
 func (a *App) Unlock(password string) error {
 	logger.Info("Unlocking")
-	a.mu.RLock()
-	operator := a.currentOperator
-	a.mu.RUnlock()
+	a.sessionService.Mu.RLock()
+	operator := a.sessionService.CurrentOperator
+	a.sessionService.Mu.RUnlock()
 
 	if operator == nil {
 		logger.Error("Not logged in")
@@ -365,10 +332,10 @@ func (a *App) Unlock(password string) error {
 		return err
 	}
 
-	a.mu.Lock()
-	a.isLocked = false
-	a.lastActivity = time.Now()
-	a.mu.Unlock()
+	a.sessionService.Mu.Lock()
+	a.sessionService.IsLocked = false
+	a.sessionService.LastActivity = time.Now()
+	a.sessionService.Mu.Unlock()
 
 	return nil
 }
@@ -376,58 +343,25 @@ func (a *App) Unlock(password string) error {
 // IsLocked returns whether the app is locked
 func (a *App) IsLocked() bool {
 	logger.Info("Checking if locked")
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.isLocked
-}
-
-// IsAuthenticated returns whether a user is authenticated
-func (a *App) IsAuthenticated() bool {
-	logger.Info("Checking if authenticated")
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.currentOperator != nil && !a.isLocked
-}
-
-// GetCurrentOperator returns the current operator info
-func (a *App) GetCurrentOperator() *OperatorInfo {
-	logger.Info("Getting current operator")
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	if a.currentOperator == nil {
-		logger.Error("Not logged in")
-		return nil
-	}
-
-	return &OperatorInfo{
-		ID:       a.currentOperator.ID,
-		Username: a.currentOperator.Username,
-		FullName: a.currentOperator.FullName,
-	}
-}
-
-// OperatorInfo is a safe struct for frontend (no password hash)
-type OperatorInfo struct {
-	ID       int64  `json:"id"`
-	Username string `json:"username"`
-	FullName string `json:"full_name"`
+	a.sessionService.Mu.RLock()
+	defer a.sessionService.Mu.RUnlock()
+	return a.sessionService.IsLocked
 }
 
 // --- Citizen Methods ---
 
 // CreateCitizen creates a new citizen
 func (a *App) CreateCitizen(input services.CitizenInput) (*services.CitizenOutput, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("CreateCitizen: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	citizen, err := a.citizenService.Create(&input)
 	if err == nil {
-		a.db.LogAudit(&database.AuditLog{
-			OperatorID:  a.currentOperator.ID,
+		a.auditLogRepo.LogAudit(&models.AuditLog{
+			OperatorID:  a.sessionService.CurrentOperator.ID,
 			ActionType:  "CREATE",
 			TableName:   "citizens",
 			RecordID:    citizen.ID,
@@ -439,16 +373,16 @@ func (a *App) CreateCitizen(input services.CitizenInput) (*services.CitizenOutpu
 
 // GetCitizen retrieves a citizen by ID
 func (a *App) GetCitizen(id int64) (*services.CitizenOutput, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("GetCitizen: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	citizen, err := a.citizenService.GetByID(id)
 	if err == nil {
-		a.db.LogAudit(&database.AuditLog{
-			OperatorID:  a.currentOperator.ID,
+		a.auditLogRepo.LogAudit(&models.AuditLog{
+			OperatorID:  a.sessionService.CurrentOperator.ID,
 			ActionType:  "READ",
 			TableName:   "citizens",
 			RecordID:    id,
@@ -460,16 +394,16 @@ func (a *App) GetCitizen(id int64) (*services.CitizenOutput, error) {
 
 // UpdateCitizen updates a citizen
 func (a *App) UpdateCitizen(id int64, input services.CitizenInput) error {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("UpdateCitizen: Not authenticated")
 		return errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	err := a.citizenService.Update(id, &input)
 	if err == nil {
-		a.db.LogAudit(&database.AuditLog{
-			OperatorID:  a.currentOperator.ID,
+		a.auditLogRepo.LogAudit(&models.AuditLog{
+			OperatorID:  a.sessionService.CurrentOperator.ID,
 			ActionType:  "UPDATE",
 			TableName:   "citizens",
 			RecordID:    id,
@@ -481,16 +415,16 @@ func (a *App) UpdateCitizen(id int64, input services.CitizenInput) error {
 
 // DeleteCitizen soft deletes a citizen
 func (a *App) DeleteCitizen(id int64) error {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("DeleteCitizen: Not authenticated")
 		return errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	err := a.citizenService.Delete(id)
 	if err == nil {
-		a.db.LogAudit(&database.AuditLog{
-			OperatorID:  a.currentOperator.ID,
+		a.auditLogRepo.LogAudit(&models.AuditLog{
+			OperatorID:  a.sessionService.CurrentOperator.ID,
 			ActionType:  "DELETE",
 			TableName:   "citizens",
 			RecordID:    id,
@@ -502,16 +436,16 @@ func (a *App) DeleteCitizen(id int64) error {
 
 // RestoreCitizen restores a soft-deleted citizen
 func (a *App) RestoreCitizen(id int64) error {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("RestoreCitizen: Not authenticated")
 		return errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	err := a.citizenService.Restore(id)
 	if err == nil {
-		a.db.LogAudit(&database.AuditLog{
-			OperatorID:  a.currentOperator.ID,
+		a.auditLogRepo.LogAudit(&models.AuditLog{
+			OperatorID:  a.sessionService.CurrentOperator.ID,
 			ActionType:  "UPDATE",
 			TableName:   "citizens",
 			RecordID:    id,
@@ -523,51 +457,51 @@ func (a *App) RestoreCitizen(id int64) error {
 
 // AddFamilyMember adds a connection between citizens
 func (a *App) AddFamilyMember(citizenID, memberID int64, relationType string) error {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("AddFamilyMember: Not authenticated")
 		return errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 	return a.citizenService.AddFamilyMember(citizenID, memberID, relationType)
 }
 
 // RemoveFamilyMember removes a connection
 func (a *App) RemoveFamilyMember(citizenID, memberID int64) error {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("RemoveFamilyMember: Not authenticated")
 		return errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 	return a.citizenService.RemoveFamilyMember(citizenID, memberID)
 }
 
 // GetFamilyMembers returns family members
 func (a *App) GetFamilyMembers(citizenID int64) ([]services.FamilyMemberOutput, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("GetFamilyMembers: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 	return a.citizenService.GetFamilyMembers(citizenID)
 }
 
 // SearchCitizens searches citizens by field
 func (a *App) SearchCitizens(query string, field string) ([]services.CitizenOutput, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("SearchCitizens: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 	return a.citizenService.Search(query, field)
 }
 
 // ListCitizens returns paginated citizens
 func (a *App) ListCitizens(page, limit int, includeDeleted bool) (*services.CitizenListResult, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("ListCitizens: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	return a.citizenService.List(page, limit, includeDeleted)
 }
@@ -576,16 +510,16 @@ func (a *App) ListCitizens(page, limit int, includeDeleted bool) (*services.Citi
 
 // CreateRegistration creates a new registration
 func (a *App) CreateRegistration(input database.RegistrationInput) (*database.RegistrationOutput, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("CreateRegistration: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	reg, err := a.registrationService.Create(&input)
 	if err == nil {
-		a.db.LogAudit(&database.AuditLog{
-			OperatorID:  a.currentOperator.ID,
+		a.auditLogRepo.LogAudit(&models.AuditLog{
+			OperatorID:  a.sessionService.CurrentOperator.ID,
 			ActionType:  "CREATE",
 			TableName:   "registrations",
 			RecordID:    reg.ID,
@@ -597,26 +531,26 @@ func (a *App) CreateRegistration(input database.RegistrationInput) (*database.Re
 
 // GetRegistrationHistory returns registration history for a citizen
 func (a *App) GetRegistrationHistory(citizenID int64) ([]database.RegistrationOutput, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("GetRegistrationHistory: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 	return a.registrationService.GetByCitizenID(citizenID)
 }
 
 // DeregisterCitizen deactivates a registration
 func (a *App) DeregisterCitizen(id int64, date string) error {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("DeregisterCitizen: Not authenticated")
 		return errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	err := a.registrationService.Deregister(id, date)
 	if err == nil {
-		a.db.LogAudit(&database.AuditLog{
-			OperatorID:  a.currentOperator.ID,
+		a.auditLogRepo.LogAudit(&models.AuditLog{
+			OperatorID:  a.sessionService.CurrentOperator.ID,
 			ActionType:  "UPDATE", // Logically an update
 			TableName:   "registrations",
 			RecordID:    id,
@@ -630,11 +564,11 @@ func (a *App) DeregisterCitizen(id int64, date string) error {
 
 // GenerateCitizenCertificate generates a registration certificate for a citizen and saves it
 func (a *App) GenerateCitizenCertificate(citizenID int64, opts services.FamilyCertificateOptions) (string, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("GenerateCitizenCertificate: Not authenticated")
 		return "", errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	// Ask user where to save
 	filename := fmt.Sprintf("certificate_%d_%s.pdf", citizenID, time.Now().Format("20060102"))
@@ -653,8 +587,8 @@ func (a *App) GenerateCitizenCertificate(citizenID int64, opts services.FamilyCe
 	}
 
 	// Create audit log
-	a.db.LogAudit(&database.AuditLog{
-		OperatorID:  a.currentOperator.ID,
+	a.auditLogRepo.LogAudit(&models.AuditLog{
+		OperatorID:  a.sessionService.CurrentOperator.ID,
 		ActionType:  "READ",
 		TableName:   "registrations",
 		RecordID:    citizenID,
@@ -685,11 +619,11 @@ func (a *App) GenerateCitizenCertificate(citizenID int64, opts services.FamilyCe
 
 // ExportCitizens exports registered citizens to Excel and saves it
 func (a *App) ExportCitizens(from, to string) (string, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("ExportCitizens: Not authenticated")
 		return "", errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	// Ask user where to save
 	filename := fmt.Sprintf("registrations_%s.xlsx", time.Now().Format("20060102"))
@@ -709,8 +643,8 @@ func (a *App) ExportCitizens(from, to string) (string, error) {
 		return "cancelled", nil // User cancelled
 	}
 
-	a.db.LogAudit(&database.AuditLog{
-		OperatorID:  a.currentOperator.ID,
+	a.auditLogRepo.LogAudit(&models.AuditLog{
+		OperatorID:  a.sessionService.CurrentOperator.ID,
 		ActionType:  "READ",
 		TableName:   "registrations",
 		Description: fmt.Sprintf("Exported citizens list from %s to %s", from, to),
@@ -740,11 +674,11 @@ func (a *App) ExportCitizens(from, to string) (string, error) {
 
 // ExportCitizensToExcel exports all citizens to Excel file
 func (a *App) ExportCitizensToExcel() (string, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("ExportCitizensToExcel: Not authenticated")
 		return "", errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	filepath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
 		Title:           "Експорт громадян",
@@ -769,8 +703,8 @@ func (a *App) ExportCitizensToExcel() (string, error) {
 		return "", err
 	}
 
-	a.db.LogAudit(&database.AuditLog{
-		OperatorID:  a.currentOperator.ID,
+	a.auditLogRepo.LogAudit(&models.AuditLog{
+		OperatorID:  a.sessionService.CurrentOperator.ID,
 		ActionType:  "READ",
 		TableName:   "citizens",
 		Description: "Exported all citizens to Excel",
@@ -781,10 +715,10 @@ func (a *App) ExportCitizensToExcel() (string, error) {
 
 // ImportCitizens imports citizens from selected Excel file
 func (a *App) ImportCitizens() (int, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		return 0, errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	filepath, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Виберіть файл для імпорту",
@@ -805,8 +739,8 @@ func (a *App) ImportCitizens() (int, error) {
 
 	count, err := a.importExportService.ImportFromExcel(data)
 	if err == nil {
-		a.db.LogAudit(&database.AuditLog{
-			OperatorID:  a.currentOperator.ID,
+		a.auditLogRepo.LogAudit(&models.AuditLog{
+			OperatorID:  a.sessionService.CurrentOperator.ID,
 			ActionType:  "CREATE",
 			TableName:   "citizens",
 			Description: fmt.Sprintf("Imported %d citizens from Excel", count),
@@ -818,10 +752,10 @@ func (a *App) ImportCitizens() (int, error) {
 
 // ExportCustomCitizensToExcel exports selected citizens and columns to Excel
 func (a *App) ExportCustomCitizensToExcel(ids []int64, columns []string) (string, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		return "", errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	if len(ids) == 0 {
 		return "", errors.New("no citizens selected")
@@ -850,8 +784,8 @@ func (a *App) ExportCustomCitizensToExcel(ids []int64, columns []string) (string
 		return "", err
 	}
 
-	a.db.LogAudit(&database.AuditLog{
-		OperatorID:  a.currentOperator.ID,
+	a.auditLogRepo.LogAudit(&models.AuditLog{
+		OperatorID:  a.sessionService.CurrentOperator.ID,
 		ActionType:  "READ",
 		TableName:   "citizens",
 		Description: fmt.Sprintf("Exported %d selected citizens to Excel with %d columns", len(ids), len(columns)),
@@ -862,33 +796,33 @@ func (a *App) ExportCustomCitizensToExcel(ids []int64, columns []string) (string
 
 // GetDashboardStats returns dashboard statistics
 func (a *App) GetDashboardStats() (*services.StatsOutput, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		return nil, errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 	return a.reportService.GetStats()
 }
 
 // GetAuditLogs returns recent audit logs
-func (a *App) GetAuditLogs(limit int) ([]database.AuditLogOutput, error) {
-	if !a.IsAuthenticated() {
+func (a *App) GetAuditLogs(limit int) ([]models.AuditLogOutput, error) {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("GetAuditLogs: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	return a.db.GetAuditLogs(limit)
+	return a.auditLogRepo.GetAuditLogs(limit)
 }
 
 // GenerateFamilyStatusCertificate generates a custom family certificate and saves it
 func (a *App) GenerateFamilyStatusCertificate(opts services.FamilyCertificateOptions) (string, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("GenerateFamilyStatusCertificate: Not authenticated")
 		return "", errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 
 	if len(opts.CitizenIDs) == 0 {
 		return "", errors.New("no citizens selected")
@@ -913,8 +847,8 @@ func (a *App) GenerateFamilyStatusCertificate(opts services.FamilyCertificateOpt
 	}
 
 	// Create audit log
-	a.db.LogAudit(&database.AuditLog{
-		OperatorID:  a.currentOperator.ID,
+	a.auditLogRepo.LogAudit(&models.AuditLog{
+		OperatorID:  a.sessionService.CurrentOperator.ID,
 		ActionType:  "READ",
 		TableName:   "citizens",
 		Description: fmt.Sprintf("Generated family certificate for %d citizens", len(opts.CitizenIDs)),
@@ -942,10 +876,10 @@ func (a *App) GenerateFamilyStatusCertificate(opts services.FamilyCertificateOpt
 	return filepath, nil
 }
 func (a *App) ListRegistrations(search string, isActive *bool, page, limit int) (*services.RegistrationListResult, error) {
-	if !a.IsAuthenticated() {
+	if !a.sessionService.IsAuthenticated() {
 		logger.Error("ListRegistrations: Not authenticated")
 		return nil, errors.New("unauthorized")
 	}
-	a.UpdateActivity()
+	a.sessionService.UpdateActivity()
 	return a.registrationService.ListAll(search, isActive, page, limit)
 }

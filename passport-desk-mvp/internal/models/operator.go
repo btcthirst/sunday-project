@@ -11,3 +11,10 @@ type Operator struct {
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
+
+// OperatorInfo is a safe struct for frontend (no password hash)
+type OperatorInfo struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	FullName string `json:"full_name"`
+}

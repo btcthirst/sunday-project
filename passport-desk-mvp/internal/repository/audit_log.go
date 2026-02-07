@@ -2,13 +2,21 @@ package repository
 
 import (
 	"database/sql"
-	"sunday-project/passport-desk-mvp/internal/database"
-	"sunday-project/passport-desk-mvp/internal/models"
+	"passport-desk-mvp/internal/database"
+	"passport-desk-mvp/internal/models"
 )
 
+type AuditLogRepository struct {
+	db *database.Database
+}
+
+func NewAuditLogRepository(db *database.Database) *AuditLogRepository {
+	return &AuditLogRepository{db: db}
+}
+
 // LogAudit creates an audit log entry
-func (d *database.Database) LogAudit(log *models.AuditLog) error {
-	_, err := d.db.Exec(
+func (a *AuditLogRepository) LogAudit(log *models.AuditLog) error {
+	_, err := a.db.DB().Exec(
 		`INSERT INTO audit_log (operator_id, action_type, table_name, record_id, description) VALUES (?, ?, ?, ?, ?)`,
 		log.OperatorID, log.ActionType, log.TableName, log.RecordID, log.Description,
 	)
@@ -16,8 +24,8 @@ func (d *database.Database) LogAudit(log *models.AuditLog) error {
 }
 
 // GetAuditLogs retrieves recent audit logs
-func (d *database.Database) GetAuditLogs(limit int) ([]models.AuditLogOutput, error) {
-	rows, err := d.db.Query(`
+func (d *AuditLogRepository) GetAuditLogs(limit int) ([]models.AuditLogOutput, error) {
+	rows, err := d.db.DB().Query(`
 		SELECT a.id, a.timestamp, a.operator_id, a.action_type, a.table_name, a.record_id, a.description, a.updated_at, o.full_name
 		FROM audit_log a
 		LEFT JOIN operators o ON a.operator_id = o.id

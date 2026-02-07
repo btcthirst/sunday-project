@@ -55,6 +55,7 @@ func (d *Database) DB() *sql.DB {
 	return d.db
 }
 
+/*
 // CreateOperator creates a new operator
 func (d *Database) CreateOperator(op *Operator) error {
 	result, err := d.db.Exec(
@@ -91,6 +92,8 @@ func (d *Database) OperatorExists() (bool, error) {
 	}
 	return count > 0, nil
 }
+
+/*
 
 // LogAudit creates an audit log entry
 func (d *Database) LogAudit(log *AuditLog) error {
@@ -131,3 +134,4 @@ func (d *Database) GetAuditLogs(limit int) ([]AuditLogOutput, error) {
 	}
 	return logs, nil
 }
+*/
