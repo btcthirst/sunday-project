@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"passport-desk-mvp/internal/assets"
+	"passport-desk-mvp/internal/logger"
 	"passport-desk-mvp/internal/models"
 	"passport-desk-mvp/internal/repository"
 
@@ -17,68 +19,118 @@ import (
 )
 
 type ReportService struct {
-	repo           *repository.ReportRepository
+	repo           repository.ReportRepositoryInterface
 	citizenService *CitizenService      // Needed to get citizen details for certificate
 	regService     *RegistrationService // Needed to get registration details
+	auditLog       *AuditLogService
 }
 
-func NewReportService(repo *repository.ReportRepository, cs *CitizenService, rs *RegistrationService) *ReportService {
+func NewReportService(repo repository.ReportRepositoryInterface, cs *CitizenService, rs *RegistrationService, auditLog *AuditLogService) *ReportService {
 	return &ReportService{
 		repo:           repo,
 		citizenService: cs,
 		regService:     rs,
+		auditLog:       auditLog,
 	}
 }
 
 func (s *ReportService) ExportRegisteredCitizens(ctx context.Context, from, to string) (string, error) {
+	log := logger.FromContext(ctx).With(
+		slog.String("service", "report"),
+		slog.String("method", "ExportRegisteredCitizens"),
+	)
+
+	log.Info("Exporting citizens", slog.String("from", from), slog.String("to", to))
+
 	f := excelize.NewFile()
 	defer f.Close()
 
 	// Create a new sheet.
 	index, err := f.NewSheet("Sheet1")
 	if err != nil {
+		log.Error("Failed to create sheet", slog.String("error", err.Error()))
 		return "", err
 	}
 
 	// Set headers
 	headers := []string{"ID", "ПІБ", "Дата народження", "Адреса", "Дата реєстрації", "Тип"}
 	for i, h := range headers {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		cell, err := excelize.CoordinatesToCellName(i+1, 1)
+		if err != nil {
+			log.Warn("Failed to get cell name", slog.Int("col", i+1), slog.String("error", err.Error()))
+			continue
+		}
 		f.SetCellValue("Sheet1", cell, h)
 	}
 
 	citizens, err := s.repo.ExportRegisteredCitizens(ctx, from, to)
 	if err != nil {
+		log.Error("Failed to fetch citizens", slog.String("error", err.Error()))
 		return "", err
 	}
 
 	for i, citizen := range citizens {
-		cell, _ := excelize.CoordinatesToCellName(i+2, 1)
-		f.SetCellValue("Sheet1", cell, citizen.ID)
-		cell, _ = excelize.CoordinatesToCellName(i+2, 2)
-		f.SetCellValue("Sheet1", cell, citizen.LastName+" "+citizen.FirstName+" "+citizen.MiddleName)
-		cell, _ = excelize.CoordinatesToCellName(i+2, 3)
-		f.SetCellValue("Sheet1", cell, citizen.BirthDate)
-		cell, _ = excelize.CoordinatesToCellName(i+2, 4)
-		f.SetCellValue("Sheet1", cell, citizen.ActiveAddress)
-		cell, _ = excelize.CoordinatesToCellName(i+2, 5)
-		f.SetCellValue("Sheet1", cell, citizen.Phone)
-		cell, _ = excelize.CoordinatesToCellName(i+2, 6)
-		f.SetCellValue("Sheet1", cell, citizen.Email)
+		cell, err := excelize.CoordinatesToCellName(i+2, 1)
+		if err == nil {
+			f.SetCellValue("Sheet1", cell, citizen.ID)
+		}
+		cell, err = excelize.CoordinatesToCellName(i+2, 2)
+		if err == nil {
+			f.SetCellValue("Sheet1", cell, citizen.LastName+" "+citizen.FirstName+" "+citizen.MiddleName)
+		}
+		cell, err = excelize.CoordinatesToCellName(i+2, 3)
+		if err == nil {
+			f.SetCellValue("Sheet1", cell, citizen.BirthDate)
+		}
+		cell, err = excelize.CoordinatesToCellName(i+2, 4)
+		if err == nil {
+			f.SetCellValue("Sheet1", cell, citizen.ActiveAddress)
+		}
+		cell, err = excelize.CoordinatesToCellName(i+2, 5)
+		if err == nil {
+			f.SetCellValue("Sheet1", cell, citizen.Phone)
+		}
+		cell, err = excelize.CoordinatesToCellName(i+2, 6)
+		if err == nil {
+			f.SetCellValue("Sheet1", cell, citizen.Email)
+		}
 	}
 
 	f.SetActiveSheet(index)
 
 	var buf bytes.Buffer
 	if err := f.Write(&buf); err != nil {
+		log.Error("Failed to write to buffer", slog.String("error", err.Error()))
 		return "", err
+	}
+
+	log.Info("Citizens exported successfully", slog.Int("count", len(citizens)))
+
+	// AUDIT LOG: Business event
+	if err := s.auditLog.LogAudit(ctx, &models.AuditLog{
+		OperatorID:  getOperatorIDFromContext(ctx),
+		ActionType:  "EXPORT",
+		TableName:   "registrations", // Logically related to registrations/citizens
+		Description: fmt.Sprintf("Exported citizens list from %s to %s. Count: %d", from, to, len(citizens)),
+	}); err != nil {
+		log.Warn("Audit log failed", slog.String("error", err.Error()))
 	}
 
 	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
-func (s *ReportService) GetStats() (*models.StatsOutput, error) {
-	return s.repo.GetStats()
+func (s *ReportService) GetStats(ctx context.Context) (*models.StatsOutput, error) {
+	log := logger.FromContext(ctx).With(
+		slog.String("service", "report"),
+		slog.String("method", "GetStats"),
+	)
+
+	stats, err := s.repo.GetStats(ctx)
+	if err != nil {
+		log.Error("GetStats failed", slog.String("error", err.Error()))
+		return nil, err
+	}
+	return stats, nil
 }
 
 func (s *ReportService) formatInitials(name string) string {
@@ -111,15 +163,25 @@ func (s *ReportService) loadFontBytes(assetPath string) ([]byte, error) {
 
 // GenerateRegistrationCertificate generates a PDF certificate for a citizen's active registration
 func (s *ReportService) GenerateRegistrationCertificate(ctx context.Context, citizenID int64, opts models.FamilyCertificateOptions) (string, error) {
+	log := logger.FromContext(ctx).With(
+		slog.String("service", "report"),
+		slog.String("method", "GenerateRegistrationCertificate"),
+		slog.Int64("citizen_id", citizenID),
+	)
+
+	log.Info("Generating registration certificate")
+
 	// 1. Get Citizen Data
 	citizen, err := s.citizenService.GetByID(ctx, citizenID)
 	if err != nil {
+		log.Error("Failed to get citizen", slog.String("error", err.Error()))
 		return "", fmt.Errorf("failed to get citizen: %w", err)
 	}
 
 	// 2. Get Active Registration
 	regs, err := s.regService.GetByCitizenID(ctx, citizenID)
 	if err != nil {
+		log.Error("Failed to get registrations", slog.String("error", err.Error()))
 		return "", fmt.Errorf("failed to get registrations: %w", err)
 	}
 
@@ -132,12 +194,14 @@ func (s *ReportService) GenerateRegistrationCertificate(ctx context.Context, cit
 	}
 
 	if activeReg == nil {
+		log.Warn("Citizen has no active registration")
 		return "", fmt.Errorf("citizen has no active registration")
 	}
 
 	// 1. Load Font Bytes
 	regFontBytes, err := s.loadFontBytes("fonts/DejaVuSans.ttf")
 	if err != nil {
+		log.Error("Failed to load fonts", slog.String("error", err.Error()))
 		return "", err
 	}
 
@@ -175,7 +239,22 @@ func (s *ReportService) GenerateRegistrationCertificate(ctx context.Context, cit
 
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {
+		log.Error("Failed to generate PDF output", slog.String("error", err.Error()))
 		return "", err
+	}
+
+	log.Info("Certificate generated successfully")
+
+	// AUDIT LOG: Business event is technically "GENERATE", but using "READ" or "EXPORT" equivalent
+	// The prompt requested: ActionType: "GENERATE"
+	if err := s.auditLog.LogAudit(ctx, &models.AuditLog{
+		OperatorID:  getOperatorIDFromContext(ctx),
+		ActionType:  "GENERATE",
+		TableName:   "registrations",
+		RecordID:    citizenID,
+		Description: fmt.Sprintf("Generated registration certificate for citizen %d", citizenID),
+	}); err != nil {
+		log.Warn("Audit log failed", slog.String("error", err.Error()))
 	}
 
 	// Return base64 encoded PDF
@@ -184,7 +263,15 @@ func (s *ReportService) GenerateRegistrationCertificate(ctx context.Context, cit
 
 // GenerateFamilyStatusCertificate generates a PDF with a list of citizens and selected columns
 func (s *ReportService) GenerateFamilyStatusCertificate(ctx context.Context, opts models.FamilyCertificateOptions) (string, error) {
+	log := logger.FromContext(ctx).With(
+		slog.String("service", "report"),
+		slog.String("method", "GenerateFamilyStatusCertificate"),
+	)
+
+	log.Info("Generating family status certificate", slog.Int("citizen_count", len(opts.CitizenIDs)))
+
 	if len(opts.CitizenIDs) == 0 {
+		log.Error("No citizens selected")
 		return "", fmt.Errorf("no citizens selected")
 	}
 
@@ -193,6 +280,7 @@ func (s *ReportService) GenerateFamilyStatusCertificate(ctx context.Context, opt
 	for _, id := range opts.CitizenIDs {
 		c, err := s.citizenService.GetByID(ctx, id)
 		if err != nil {
+			log.Error("Failed to get citizen", slog.Int64("id", id), slog.String("error", err.Error()))
 			return "", fmt.Errorf("failed to get citizen %d: %w", id, err)
 		}
 		citizens = append(citizens, c)
@@ -204,10 +292,12 @@ func (s *ReportService) GenerateFamilyStatusCertificate(ctx context.Context, opt
 	// 2. Load Font Bytes
 	regFontBytes, err := s.loadFontBytes("fonts/DejaVuSans.ttf")
 	if err != nil {
+		log.Error("Failed to load fonts", slog.String("error", err.Error()))
 		return "", err
 	}
 	boldFontBytes, err := s.loadFontBytes("fonts/DejaVuSans-Bold.ttf")
 	if err != nil {
+		log.Error("Failed to load fonts", slog.String("error", err.Error()))
 		return "", err
 	}
 
@@ -319,7 +409,21 @@ func (s *ReportService) GenerateFamilyStatusCertificate(ctx context.Context, opt
 
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {
+		log.Error("Failed to generate PDF output", slog.String("error", err.Error()))
 		return "", err
+	}
+
+	log.Info("Family status certificate generated successfully")
+
+	// AUDIT LOG
+	if err := s.auditLog.LogAudit(ctx, &models.AuditLog{
+		OperatorID:  getOperatorIDFromContext(ctx),
+		ActionType:  "GENERATE",
+		TableName:   "citizens",
+		RecordID:    primary.ID,
+		Description: fmt.Sprintf("Generated family status certificate including %d citizens", len(citizens)),
+	}); err != nil {
+		log.Warn("Audit log failed", slog.String("error", err.Error()))
 	}
 
 	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil

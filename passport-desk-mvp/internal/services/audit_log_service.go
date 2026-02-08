@@ -8,12 +8,12 @@ import (
 )
 
 type AuditLogService struct {
-	auditLogRepo   *repository.AuditLogRepository
+	auditLogRepo   repository.AuditLogRepositoryInterface
 	sessionService *SessionService
 }
 
 // NewAuditLogService creates a new audit log service
-func NewAuditLogService(auditLogRepo *repository.AuditLogRepository, sessionService *SessionService) *AuditLogService {
+func NewAuditLogService(auditLogRepo repository.AuditLogRepositoryInterface, sessionService *SessionService) *AuditLogService {
 	return &AuditLogService{auditLogRepo: auditLogRepo, sessionService: sessionService}
 }
 
@@ -22,6 +22,15 @@ func (s *AuditLogService) LogAudit(ctx context.Context, log *models.AuditLog) er
 		return errors.New("not authenticated")
 	}
 	s.sessionService.UpdateActivity()
+
+	if log.OperatorID == 0 {
+		s.sessionService.Mu.RLock()
+		if s.sessionService.CurrentOperator != nil {
+			log.OperatorID = s.sessionService.CurrentOperator.ID
+		}
+		s.sessionService.Mu.RUnlock()
+	}
+
 	return s.auditLogRepo.LogAudit(ctx, log)
 }
 

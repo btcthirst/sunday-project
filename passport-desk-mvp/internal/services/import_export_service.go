@@ -2,28 +2,45 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"log/slog"
+	"passport-desk-mvp/internal/logger"
+	"passport-desk-mvp/internal/models"
 
 	"github.com/xuri/excelize/v2"
 )
 
 type ImportExportService struct {
 	citizenService *CitizenService
+	auditLog       *AuditLogService
 }
 
-func NewImportExportService(cs *CitizenService) *ImportExportService {
+func NewImportExportService(cs *CitizenService, auditLog *AuditLogService) *ImportExportService {
 	return &ImportExportService{
 		citizenService: cs,
+		auditLog:       auditLog,
 	}
 }
 
 // ExportToExcel generates an Excel file with all citizen data
-func (s *ImportExportService) ExportToExcel() ([]byte, error) {
+func (s *ImportExportService) ExportToExcel(ctx context.Context) ([]byte, error) {
+	log := logger.FromContext(ctx).With(
+		slog.String("service", "import_export"),
+		slog.String("method", "ExportToExcel"),
+	)
+
+	log.Info("Exporting all citizens to Excel")
+
 	f := excelize.NewFile()
 	defer f.Close()
 
 	sheet := "Citizens"
-	f.NewSheet(sheet)
+	index, err := f.NewSheet(sheet)
+	if err != nil {
+		log.Error("Failed to create sheet", slog.String("error", err.Error()))
+		return nil, err
+	}
 	f.DeleteSheet("Sheet1")
 
 	headers := []string{
@@ -38,8 +55,9 @@ func (s *ImportExportService) ExportToExcel() ([]byte, error) {
 	}
 
 	// Fetch all citizens (including deleted if needed, but normally only active)
-	result, err := s.citizenService.List(1, 1000000, false)
+	result, err := s.citizenService.List(ctx, 1, 1000000, false)
 	if err != nil {
+		log.Error("Failed to fetch citizens", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -61,21 +79,47 @@ func (s *ImportExportService) ExportToExcel() ([]byte, error) {
 		f.SetCellValue(sheet, fmt.Sprintf("N%d", row), c.Notes)
 	}
 
+	f.SetActiveSheet(index)
+
 	buf, err := f.WriteToBuffer()
 	if err != nil {
+		log.Error("Failed to write buffer", slog.String("error", err.Error()))
 		return nil, err
+	}
+
+	log.Info("Export successful", slog.Int("count", int(result.Total)))
+
+	// AUDIT LOG
+	if err := s.auditLog.LogAudit(ctx, &models.AuditLog{
+		OperatorID:  getOperatorIDFromContext(ctx),
+		ActionType:  "EXPORT",
+		TableName:   "citizens",
+		Description: fmt.Sprintf("Exported all citizens to Excel. Count: %d", result.Total),
+	}); err != nil {
+		log.Warn("Audit log failed", slog.String("error", err.Error()))
 	}
 
 	return buf.Bytes(), nil
 }
 
 // ExportCustomToExcel generates an Excel file for specific citizens and columns
-func (s *ImportExportService) ExportCustomToExcel(ids []int64, columns []string) ([]byte, error) {
+func (s *ImportExportService) ExportCustomToExcel(ctx context.Context, ids []int64, columns []string) ([]byte, error) {
+	log := logger.FromContext(ctx).With(
+		slog.String("service", "import_export"),
+		slog.String("method", "ExportCustomToExcel"),
+	)
+
+	log.Info("Exporting custom citizens to Excel", slog.Int("count", len(ids)), slog.Int("columns", len(columns)))
+
 	f := excelize.NewFile()
 	defer f.Close()
 
 	sheet := "Citizens"
-	f.NewSheet(sheet)
+	index, err := f.NewSheet(sheet)
+	if err != nil {
+		log.Error("Failed to create sheet", slog.String("error", err.Error()))
+		return nil, err
+	}
 	f.DeleteSheet("Sheet1")
 
 	// Map of internal keys to display headers
@@ -112,11 +156,13 @@ func (s *ImportExportService) ExportCustomToExcel(ids []int64, columns []string)
 	}
 
 	// Fetch data for selected IDs
-	var items []CitizenOutput
+	var items []models.CitizenOutput
 	for _, id := range ids {
-		c, err := s.citizenService.GetByID(id)
+		c, err := s.citizenService.GetByID(ctx, id)
 		if err == nil {
 			items = append(items, *c)
+		} else {
+			log.Warn("Failed to fetch citizen for export", slog.Int64("id", id), slog.String("error", err.Error()))
 		}
 	}
 
@@ -164,19 +210,42 @@ func (s *ImportExportService) ExportCustomToExcel(ids []int64, columns []string)
 		}
 	}
 
+	f.SetActiveSheet(index)
+
 	buf, err := f.WriteToBuffer()
 	if err != nil {
+		log.Error("Failed to write buffer", slog.String("error", err.Error()))
 		return nil, err
+	}
+
+	log.Info("Custom export successful")
+
+	// AUDIT LOG
+	if err := s.auditLog.LogAudit(ctx, &models.AuditLog{
+		OperatorID:  getOperatorIDFromContext(ctx),
+		ActionType:  "EXPORT",
+		TableName:   "citizens",
+		Description: fmt.Sprintf("Exported %d selected citizens to Excel with %d columns", len(ids), len(columns)),
+	}); err != nil {
+		log.Warn("Audit log failed", slog.String("error", err.Error()))
 	}
 
 	return buf.Bytes(), nil
 }
 
 // ImportFromExcel imports citizens from an Excel file
-func (s *ImportExportService) ImportFromExcel(data []byte) (int, error) {
+func (s *ImportExportService) ImportFromExcel(ctx context.Context, data []byte) (int, error) {
+	log := logger.FromContext(ctx).With(
+		slog.String("service", "import_export"),
+		slog.String("method", "ImportFromExcel"),
+	)
+
+	log.Info("Starting import from Excel")
+
 	reader := bytes.NewReader(data)
 	f, err := excelize.OpenReader(reader)
 	if err != nil {
+		log.Error("Failed to open excel", slog.String("error", err.Error()))
 		return 0, fmt.Errorf("failed to open excel: %w", err)
 	}
 	defer f.Close()
@@ -186,15 +255,18 @@ func (s *ImportExportService) ImportFromExcel(data []byte) (int, error) {
 		// Try first sheet if "Citizens" doesn't exist
 		sheets := f.GetSheetList()
 		if len(sheets) == 0 {
+			log.Error("No sheets found in Excel file")
 			return 0, fmt.Errorf("no sheets found")
 		}
 		rows, err = f.GetRows(sheets[0])
 		if err != nil {
+			log.Error("Failed to get rows", slog.String("error", err.Error()))
 			return 0, fmt.Errorf("failed to get rows: %w", err)
 		}
 	}
 
 	if len(rows) < 2 {
+		log.Warn("Excel file empty or header only")
 		return 0, nil // Header only or empty
 	}
 
@@ -207,7 +279,7 @@ func (s *ImportExportService) ImportFromExcel(data []byte) (int, error) {
 			continue // Mandatory: Last name, First name
 		}
 
-		input := &CitizenInput{
+		input := &models.CitizenInput{
 			LastName:   row[1],
 			FirstName:  row[2],
 			MiddleName: getRowValue(row, 3),
@@ -238,10 +310,24 @@ func (s *ImportExportService) ImportFromExcel(data []byte) (int, error) {
 			input.Phone = row[11]
 		}
 
-		_, err := s.citizenService.Create(input)
+		_, err := s.citizenService.Create(ctx, input)
 		if err == nil {
 			count++
+		} else {
+			log.Warn("Failed to import row", slog.Int("row", i+1), slog.String("error", err.Error()))
 		}
+	}
+
+	log.Info("Import completed", slog.Int("imported_count", count))
+
+	// AUDIT LOG
+	if err := s.auditLog.LogAudit(ctx, &models.AuditLog{
+		OperatorID:  getOperatorIDFromContext(ctx),
+		ActionType:  "CREATE",
+		TableName:   "citizens",
+		Description: fmt.Sprintf("Imported %d citizens from Excel", count),
+	}); err != nil {
+		log.Warn("Audit log failed", slog.String("error", err.Error()))
 	}
 
 	return count, nil

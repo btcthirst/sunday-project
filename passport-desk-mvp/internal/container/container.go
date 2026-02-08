@@ -13,11 +13,12 @@ type Container struct {
 	Crypto   *security.Crypto
 
 	// Repositories
-	AuditLogRepo     *repository.AuditLogRepository
-	CitizenRepo      *repository.CitizenRepository
-	RegistrationRepo *repository.RegistrationRepository
-	ReportRepo       *repository.ReportRepository
-	OperatorRepo     *repository.OperatorRepository
+	// Repositories
+	AuditLogRepo     repository.AuditLogRepositoryInterface
+	CitizenRepo      repository.CitizenRepositoryInterface
+	RegistrationRepo repository.RegistrationRepositoryInterface
+	ReportRepo       repository.ReportRepositoryInterface
+	OperatorRepo     repository.OperatorRepositoryInterface
 
 	// Services
 	AuditLogService     *services.AuditLogService
@@ -56,9 +57,9 @@ func (c *Container) InitializeWithKey(key []byte, dbPath string) error {
 
 	c.AuditLogService = services.NewAuditLogService(c.AuditLogRepo, c.SessionService)
 	c.CitizenService = services.NewCitizenService(c.Crypto, c.CitizenRepo, c.AuditLogService)
-	c.RegistrationService = services.NewRegistrationService(c.RegistrationRepo, c.Crypto)
-	c.ReportService = services.NewReportService(c.DB, c.CitizenService, c.RegistrationService)
-	c.ImportExportService = services.NewImportExportService(c.CitizenService)
+	c.RegistrationService = services.NewRegistrationService(c.RegistrationRepo, c.Crypto, c.AuditLogService)
+	c.ReportService = services.NewReportService(c.ReportRepo, c.CitizenService, c.RegistrationService, c.AuditLogService)
+	c.ImportExportService = services.NewImportExportService(c.CitizenService, c.AuditLogService)
 	c.OperatorService = services.NewOperatorService(c.SessionService, c.OperatorRepo)
 	c.SessionService.EncryptionKey = key
 	return nil

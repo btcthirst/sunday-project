@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,13 +17,13 @@ import (
 // CitizenService handles citizen-related operations
 type CitizenService struct {
 	crypto    *security.Crypto
-	repo      *repository.CitizenRepository
+	repo      repository.CitizenRepositoryInterface
 	validator *CitizenValidator
 	auditLog  *AuditLogService
 }
 
 // NewCitizenService creates a new citizen service
-func NewCitizenService(crypto *security.Crypto, repo *repository.CitizenRepository, auditLog *AuditLogService) *CitizenService {
+func NewCitizenService(crypto *security.Crypto, repo repository.CitizenRepositoryInterface, auditLog *AuditLogService) *CitizenService {
 	validator := NewCitizenValidator()
 	return &CitizenService{crypto: crypto, repo: repo, validator: validator, auditLog: auditLog}
 }
@@ -76,11 +75,58 @@ func (s *CitizenService) Create(ctx context.Context, input *models.CitizenInput)
 	}); err != nil {
 		log.Warn("Audit log failed", slog.String("error", err.Error()))
 	}
-	return s.repo.GetByID(ctx, id)
+	return s.GetByID(ctx, id)
 }
 
 func (s *CitizenService) GetByID(ctx context.Context, id int64) (*models.CitizenOutput, error) {
-	return s.repo.GetByID(ctx, id)
+	log := logger.FromContext(ctx).With(
+		slog.String("service", "citizen"),
+		slog.String("method", "GetByID"),
+		slog.Int64("id", id),
+	)
+
+	citizen, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		log.Error("Failed to get citizen", slog.String("error", err.Error()))
+		return nil, err
+	}
+
+	if d, err := s.crypto.Decrypt(citizen.Phone); err == nil {
+		citizen.Phone = d
+	} else {
+		log.Warn("Failed to decrypt phone", slog.String("error", err.Error()))
+	}
+
+	if d, err := s.crypto.Decrypt(citizen.Email); err == nil {
+		citizen.Email = d
+	} else {
+		log.Warn("Failed to decrypt email", slog.String("error", err.Error()))
+	}
+
+	if d, err := s.crypto.Decrypt(citizen.TaxNumber); err == nil {
+		citizen.TaxNumber = d
+	} else {
+		log.Warn("Failed to decrypt tax number", slog.String("error", err.Error()))
+	}
+
+	if d, err := s.crypto.Decrypt(citizen.PassportNumber); err == nil {
+		citizen.PassportNumber = d
+	} else {
+		log.Warn("Failed to decrypt passport number", slog.String("error", err.Error()))
+	}
+
+	// AUDIT LOG: Business event - View Citizen
+	if err := s.auditLog.LogAudit(ctx, &models.AuditLog{
+		OperatorID:  getOperatorIDFromContext(ctx),
+		ActionType:  "READ",
+		TableName:   "citizens",
+		RecordID:    id,
+		Description: fmt.Sprintf("Viewed citizen: %s", citizen.FullName),
+	}); err != nil {
+		log.Warn("Audit log failed", slog.String("error", err.Error()))
+	}
+
+	return citizen, nil
 }
 
 func (s *CitizenService) Update(ctx context.Context, id int64, input *models.CitizenInput) (*models.CitizenOutput, error) {
@@ -216,40 +262,83 @@ func (s *CitizenService) Restore(ctx context.Context, id int64) error {
 }
 
 func (s *CitizenService) List(ctx context.Context, offset, limit int, includeDeleted bool) (*models.CitizenListResult, error) {
-	citizenList, integer, err := s.repo.List(ctx, offset, limit, includeDeleted)
+	log := logger.FromContext(ctx).With(
+		slog.String("service", "citizen"),
+		slog.String("method", "List"),
+	)
+
+	citizenList, total, err := s.repo.List(ctx, offset, limit, includeDeleted)
 	if err != nil {
+		log.Error("List failed", slog.String("error", err.Error()))
 		return nil, err
 	}
-	citizerRezulr := models.CitizenListResult{
-		Total: integer,
-		Items: citizenList,
+
+	for i := range citizenList {
+		decrypted, _ := s.decryptSensitiveFieldsWithLog(ctx, *citizenList[i])
+		*citizenList[i] = decrypted
+		s.computeFields(ctx, citizenList[i])
 	}
-	return &citizerRezulr, nil
+
+	return &models.CitizenListResult{
+		Total: total,
+		Items: citizenList,
+	}, nil
 }
 
 func (s *CitizenService) Search(ctx context.Context, query string, field string) ([]*models.CitizenOutput, error) {
 	log := logger.FromContext(ctx).With(
 		slog.String("service", "citizen"),
 		slog.String("method", "Search"),
+		slog.String("field", field),
+		slog.String("query", query),
 	)
+	log.Info("Searching citizens")
+	var results []*models.CitizenOutput
+	var err error
 	switch field {
 	case "name":
-		log.Info("Searching by name", slog.String("query", query))
-		return s.repo.SearchByName(ctx, query, 10)
+		results, err = s.repo.SearchByName(ctx, query, 10)
 	case "birth_date":
-		log.Info("Searching by birth date", slog.String("query", query))
-		return s.repo.SearchByBirthDate(ctx, query, 10)
+		results, err = s.repo.SearchByBirthDate(ctx, query, 10)
 	default:
+		log.Error("Invalid search field", slog.String("field", field))
 		return nil, errors.New("invalid field")
 	}
+
+	if err != nil {
+		log.Error("Search failed", slog.String("error", err.Error()))
+		return nil, err
+	}
+
+	for i := range results {
+		*results[i], _ = s.decryptSensitiveFieldsWithLog(ctx, *results[i])
+		s.computeFields(ctx, results[i])
+	}
+	return results, nil
 }
 
 func (s *CitizenService) SearchByName(ctx context.Context, searchTerm string, limit int) ([]*models.CitizenOutput, error) {
-	return s.repo.SearchByName(ctx, searchTerm, limit)
+	results, err := s.repo.SearchByName(ctx, searchTerm, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range results {
+		*results[i], _ = s.decryptSensitiveFieldsWithLog(ctx, *results[i])
+		s.computeFields(ctx, results[i])
+	}
+	return results, nil
 }
 
 func (s *CitizenService) SearchByBirthDate(ctx context.Context, birthDate string, limit int) ([]*models.CitizenOutput, error) {
-	return s.repo.SearchByBirthDate(ctx, birthDate, limit)
+	results, err := s.repo.SearchByBirthDate(ctx, birthDate, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range results {
+		*results[i], _ = s.decryptSensitiveFieldsWithLog(ctx, *results[i])
+		s.computeFields(ctx, results[i])
+	}
+	return results, nil
 }
 
 func (s *CitizenService) Exists(ctx context.Context, id int64) (bool, error) {
@@ -257,23 +346,49 @@ func (s *CitizenService) Exists(ctx context.Context, id int64) (bool, error) {
 }
 
 func (s *CitizenService) GetByPassport(ctx context.Context, passportSeries, passportNumber string) (*models.CitizenOutput, error) {
-	return s.repo.GetByPassport(ctx, passportSeries, passportNumber)
+	citizen, err := s.repo.GetByPassport(ctx, passportSeries, passportNumber)
+	if err != nil {
+		return nil, err
+	}
+	if citizen != nil {
+		*citizen, _ = s.decryptSensitiveFieldsWithLog(ctx, *citizen)
+		s.computeFields(ctx, citizen)
+	}
+	return citizen, nil
 }
 
 func (s *CitizenService) GetAll(ctx context.Context) ([]*models.CitizenOutput, error) {
-	return s.repo.GetAll(ctx)
+	results, err := s.repo.GetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range results {
+		*results[i], _ = s.decryptSensitiveFieldsWithLog(ctx, *results[i])
+		s.computeFields(ctx, results[i])
+	}
+	return results, nil
 }
 
 func (s *CitizenService) GetFamilyMembers(ctx context.Context, citizenID int64) ([]*models.FamilyMemberOutput, error) {
+	log := logger.FromContext(ctx).With(
+		slog.String("service", "citizen"),
+		slog.String("method", "GetFamilyMembers"),
+		slog.Int64("citizen_id", citizenID),
+	)
+
 	familyMembers, err := s.repo.GetFamilyMembers(ctx, citizenID)
 	if err != nil {
+		log.Error("Failed to get family members", slog.String("error", err.Error()))
 		return nil, err
 	}
 	decryptedFamilyMembers := make([]*models.FamilyMemberOutput, len(familyMembers))
 	for i, familyMember := range familyMembers {
 		familyMember.BirthDate = normalizeDate(familyMember.BirthDate)
-		familyMember.CitizenOutput, err = s.decryptSensitiveFields(familyMember.CitizenOutput)
+		familyMember.CitizenOutput, err = s.decryptSensitiveFieldsWithLog(ctx, familyMember.CitizenOutput)
 		if err != nil {
+			// Technical error already logged in decryptSensitiveFieldsWithLog?
+			// No, decryptSensitiveFieldsWithLog might not log error if we want it to be silent but it returns err.
+			// Let's make it log.
 			return nil, err
 		}
 		familyMember.CitizenOutput.BirthDate = normalizeDate(familyMember.CitizenOutput.BirthDate)
@@ -288,50 +403,6 @@ func (s *CitizenService) RemoveFamilyMember(ctx context.Context, citizenID, memb
 
 func (s *CitizenService) AddFamilyMember(ctx context.Context, citizenID, memberID int64, relationType string) error {
 	return s.repo.AddFamilyMember(ctx, citizenID, memberID, relationType)
-}
-
-// Scanner interface for both Row and Rows
-type scanner interface {
-	Scan(dest ...interface{}) error
-}
-
-func (s *CitizenService) scanCitizen(row *sql.Row) (*models.CitizenOutput, error) {
-	return s.scanCitizenFromScanner(row)
-}
-
-func (s *CitizenService) scanCitizenFromRows(rows *sql.Rows) (*models.CitizenOutput, error) {
-	return s.scanCitizenFromScanner(rows)
-}
-
-func (s *CitizenService) scanCitizenFromScanner(sc scanner) (*models.CitizenOutput, error) {
-	var c models.CitizenOutput
-	var activeAddress sql.NullString
-
-	err := sc.Scan(
-		&c.ID, &c.LastName, &c.FirstName, &c.MiddleName, &c.BirthDate,
-		&c.PassportSeries, &c.PassportNumber, &c.PassportType, &c.TaxNumber,
-		&c.Gender, &c.BirthPlace, &c.Phone, &c.Email, &c.Notes,
-		&c.Deleted, &c.CreatedAt, &c.UpdatedAt, &activeAddress,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Decrypt sensitive fields
-	c, err = s.decryptSensitiveFields(c)
-	if err != nil {
-		return nil, err
-	}
-	c.BirthDate = normalizeDate(c.BirthDate)
-
-	if activeAddress.Valid {
-		c.ActiveAddress = activeAddress.String
-	}
-
-	// Computed fields
-	c = *s.computeFields(&c)
-
-	return &c, nil
 }
 
 // maskPassport masks passport number for display
@@ -393,20 +464,55 @@ func (s *CitizenService) encryptSensitiveFields(input *models.CitizenInput) (*mo
 }
 
 func (s *CitizenService) decryptSensitiveFields(input models.CitizenOutput) (models.CitizenOutput, error) {
-	// Decrypt sensitive fields
-	input.PassportSeries, _ = s.crypto.Decrypt(input.PassportSeries)
-	input.PassportNumber, _ = s.crypto.Decrypt(input.PassportNumber)
-	input.TaxNumber, _ = s.crypto.Decrypt(input.TaxNumber)
-	input.Phone, _ = s.crypto.Decrypt(input.Phone)
+	// Fallback to global logger if context is missing, but preferably we use the version with context
+	return s.decryptSensitiveFieldsWithLog(context.Background(), input)
+}
+
+func (s *CitizenService) decryptSensitiveFieldsWithLog(ctx context.Context, input models.CitizenOutput) (models.CitizenOutput, error) {
+	log := logger.FromContext(ctx)
+
+	if d, err := s.crypto.Decrypt(input.PassportSeries); err == nil {
+		input.PassportSeries = d
+	} else {
+		log.Warn("Failed to decrypt passport series", slog.String("error", err.Error()))
+	}
+
+	if d, err := s.crypto.Decrypt(input.PassportNumber); err == nil {
+		input.PassportNumber = d
+	} else {
+		log.Warn("Failed to decrypt passport number", slog.String("error", err.Error()))
+	}
+
+	if d, err := s.crypto.Decrypt(input.TaxNumber); err == nil {
+		input.TaxNumber = d
+	} else {
+		log.Warn("Failed to decrypt tax number", slog.String("error", err.Error()))
+	}
+
+	if d, err := s.crypto.Decrypt(input.Phone); err == nil {
+		input.Phone = d
+	} else {
+		log.Warn("Failed to decrypt phone", slog.String("error", err.Error()))
+	}
 
 	return input, nil
 }
 
-func (s *CitizenService) computeFields(input *models.CitizenOutput) *models.CitizenOutput {
+func (s *CitizenService) computeFields(ctx context.Context, input *models.CitizenOutput) *models.CitizenOutput {
+	log := logger.FromContext(ctx)
+
 	// Compute fields
 	var createdAt, updatedAt time.Time
-	createdAt, _ = time.Parse("2006-01-02 15:04:05", input.CreatedAt)
-	updatedAt, _ = time.Parse("2006-01-02 15:04:05", input.UpdatedAt)
+	var err error
+	createdAt, err = time.Parse("2006-01-02 15:04:05", input.CreatedAt)
+	if err != nil {
+		log.Warn("Failed to parse CreatedAt", slog.String("value", input.CreatedAt), slog.String("error", err.Error()))
+	}
+
+	updatedAt, err = time.Parse("2006-01-02 15:04:05", input.UpdatedAt)
+	if err != nil {
+		log.Warn("Failed to parse UpdatedAt", slog.String("value", input.UpdatedAt), slog.String("error", err.Error()))
+	}
 	input.FullName = strings.TrimSpace(input.LastName + " " + input.FirstName + " " + input.MiddleName)
 	input.PassportMasked = maskPassport(input.PassportSeries, input.PassportNumber)
 	input.TaxNumberMasked = maskTaxNumber(input.TaxNumber)

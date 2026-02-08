@@ -49,12 +49,12 @@ import { ref, h, onMounted, reactive, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NTag, NSpace, useMessage, type DataTableColumns, NInput, NIcon, NCard, NRadioGroup, NRadioButton } from 'naive-ui'
 import { ListRegistrations } from '../../wailsjs/go/main/App'
-import { services } from '../../wailsjs/go/models'
+import { models } from '../../wailsjs/go/models'
 
 const router = useRouter()
 const message = useMessage()
 
-const registrations = ref<services.RegistrationListItem[]>([])
+const registrations = ref<models.RegistrationListItem[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
 const filterValue = ref('active')
@@ -87,7 +87,7 @@ function formatDate(dateStr: string) {
   }
 }
 
-const columns: DataTableColumns<services.RegistrationListItem> = [
+const columns: DataTableColumns<models.RegistrationListItem> = [
   {
     title: 'ПІБ',
     key: 'citizen_name',

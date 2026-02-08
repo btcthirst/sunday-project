@@ -52,13 +52,13 @@ import { ref, h, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NTag, NSpace, useMessage, useDialog, type DataTableColumns } from 'naive-ui'
 import { ListCitizens, SearchCitizens, DeleteCitizen, RestoreCitizen } from '../../wailsjs/go/main/App'
-import { services } from '../../wailsjs/go/models'
+import { models } from '../../wailsjs/go/models'
 
 const router = useRouter()
 const message = useMessage()
 const dialog = useDialog()
 
-const citizens = ref<services.CitizenOutput[]>([])
+const citizens = ref<models.CitizenOutput[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
 let searchTimeout: number | null = null
@@ -82,7 +82,7 @@ const pagination = reactive({
   showSizePicker: false,
 })
 
-const columns: DataTableColumns<services.CitizenOutput> = [
+const columns: DataTableColumns<models.CitizenOutput> = [
   {
     title: 'ПІБ',
     key: 'full_name',
@@ -100,7 +100,7 @@ const columns: DataTableColumns<services.CitizenOutput> = [
     title: 'Адреса реєстрації',
     key: 'active_address',
     width: 250,
-    render(row: services.CitizenOutput) {
+    render(row: models.CitizenOutput) {
       return (row as any).active_address || '-'
     }
   },
@@ -108,7 +108,7 @@ const columns: DataTableColumns<services.CitizenOutput> = [
     title: 'Паспорт',
     key: 'passport_masked',
     width: 180,
-    render(row: services.CitizenOutput) {
+    render(row: models.CitizenOutput) {
       return h(NTag, { type: 'info', bordered: false }, { default: () => row.passport_masked })
     }
   },
@@ -121,7 +121,7 @@ const columns: DataTableColumns<services.CitizenOutput> = [
     title: 'Дії',
     key: 'actions',
     width: 150,
-    render(row: services.CitizenOutput) {
+    render(row: models.CitizenOutput) {
       if (row.deleted) {
         return h(NButton, {
           size: 'small',
@@ -210,7 +210,7 @@ function handleSearchUpdate(value: string) {
   }
 }
 
-function handleDelete(row: services.CitizenOutput) {
+function handleDelete(row: models.CitizenOutput) {
   dialog.warning({
     title: 'Видалення',
     content: `Ви впевнені, що хочете видалити громадянина ${row.full_name}?`,
@@ -228,7 +228,7 @@ function handleDelete(row: services.CitizenOutput) {
   })
 }
 
-async function handleRestore(row: services.CitizenOutput) {
+async function handleRestore(row: models.CitizenOutput) {
   try {
     await RestoreCitizen(row.id)
     message.success('Успішно відновлено')

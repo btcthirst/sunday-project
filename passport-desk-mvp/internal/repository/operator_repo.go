@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"passport-desk-mvp/internal/database"
 	"passport-desk-mvp/internal/models"
 )
@@ -14,8 +15,8 @@ func NewOperatorRepository(db *database.Database) *OperatorRepository {
 }
 
 // CreateOperator creates a new operator
-func (d *OperatorRepository) CreateOperator(op *models.Operator) error {
-	result, err := d.db.DB().Exec(
+func (d *OperatorRepository) Create(ctx context.Context, op *models.Operator) error {
+	result, err := d.db.DB().ExecContext(ctx,
 		`INSERT INTO operators (username, password_hash, full_name) VALUES (?, ?, ?)`,
 		op.Username, op.PasswordHash, op.FullName,
 	)
@@ -28,9 +29,9 @@ func (d *OperatorRepository) CreateOperator(op *models.Operator) error {
 }
 
 // GetOperatorByUsername retrieves an operator by username
-func (d *OperatorRepository) GetOperatorByUsername(username string) (*models.Operator, error) {
+func (d *OperatorRepository) GetByUsername(ctx context.Context, username string) (*models.Operator, error) {
 	op := &models.Operator{}
-	err := d.db.DB().QueryRow(
+	err := d.db.DB().QueryRowContext(ctx,
 		`SELECT id, username, password_hash, full_name, created_at, updated_at FROM operators WHERE username = ?`,
 		username,
 	).Scan(&op.ID, &op.Username, &op.PasswordHash, &op.FullName, &op.CreatedAt, &op.UpdatedAt)
@@ -41,9 +42,9 @@ func (d *OperatorRepository) GetOperatorByUsername(username string) (*models.Ope
 }
 
 // OperatorExists checks if any operators exist in the database
-func (d *OperatorRepository) OperatorExists() (bool, error) {
+func (d *OperatorRepository) Exists(ctx context.Context) (bool, error) {
 	var count int
-	err := d.db.DB().QueryRow(`SELECT COUNT(*) FROM operators`).Scan(&count)
+	err := d.db.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM operators`).Scan(&count)
 	if err != nil {
 		return false, err
 	}

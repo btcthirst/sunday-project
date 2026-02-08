@@ -1,4 +1,4 @@
-export namespace database {
+export namespace models {
 	
 	export class AuditLogOutput {
 	    id: number;
@@ -9,6 +9,12 @@ export namespace database {
 	    table_name: string;
 	    record_id?: number;
 	    description?: string;
+	    ip_address?: string;
+	    user_agent?: string;
+	    session_id?: string;
+	    success: boolean;
+	    error_msg?: string;
+	    metadata?: string;
 	    // Go type: time
 	    updated_at: any;
 	    operator_name: string;
@@ -26,6 +32,12 @@ export namespace database {
 	        this.table_name = source["table_name"];
 	        this.record_id = source["record_id"];
 	        this.description = source["description"];
+	        this.ip_address = source["ip_address"];
+	        this.user_agent = source["user_agent"];
+	        this.session_id = source["session_id"];
+	        this.success = source["success"];
+	        this.error_msg = source["error_msg"];
+	        this.metadata = source["metadata"];
 	        this.updated_at = this.convertValues(source["updated_at"], null);
 	        this.operator_name = source["operator_name"];
 	    }
@@ -48,122 +60,6 @@ export namespace database {
 		    return a;
 		}
 	}
-	export class RegistrationInput {
-	    citizen_id: number;
-	    registration_type: string;
-	    region: string;
-	    district: string;
-	    settlement: string;
-	    street: string;
-	    house_number: string;
-	    apartment_number: string;
-	    registration_date: string;
-	    basis_document: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new RegistrationInput(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.citizen_id = source["citizen_id"];
-	        this.registration_type = source["registration_type"];
-	        this.region = source["region"];
-	        this.district = source["district"];
-	        this.settlement = source["settlement"];
-	        this.street = source["street"];
-	        this.house_number = source["house_number"];
-	        this.apartment_number = source["apartment_number"];
-	        this.registration_date = source["registration_date"];
-	        this.basis_document = source["basis_document"];
-	    }
-	}
-	export class RegistrationOutput {
-	    id: number;
-	    citizen_id: number;
-	    registration_type: string;
-	    region: string;
-	    district?: string;
-	    settlement: string;
-	    street: string;
-	    house_number: string;
-	    apartment_number?: string;
-	    registration_date: string;
-	    deregistration_date?: string;
-	    basis_document?: string;
-	    is_active: boolean;
-	    // Go type: time
-	    created_at: any;
-	    // Go type: time
-	    updated_at: any;
-	
-	    static createFrom(source: any = {}) {
-	        return new RegistrationOutput(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.citizen_id = source["citizen_id"];
-	        this.registration_type = source["registration_type"];
-	        this.region = source["region"];
-	        this.district = source["district"];
-	        this.settlement = source["settlement"];
-	        this.street = source["street"];
-	        this.house_number = source["house_number"];
-	        this.apartment_number = source["apartment_number"];
-	        this.registration_date = source["registration_date"];
-	        this.deregistration_date = source["deregistration_date"];
-	        this.basis_document = source["basis_document"];
-	        this.is_active = source["is_active"];
-	        this.created_at = this.convertValues(source["created_at"], null);
-	        this.updated_at = this.convertValues(source["updated_at"], null);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-
-}
-
-export namespace main {
-	
-	export class OperatorInfo {
-	    id: number;
-	    username: string;
-	    full_name: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new OperatorInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.username = source["username"];
-	        this.full_name = source["full_name"];
-	    }
-	}
-
-}
-
-export namespace services {
-	
 	export class FamilyRelationInput {
 	    member_id: number;
 	    relation_type: string;
@@ -408,6 +304,76 @@ export namespace services {
 	    }
 	}
 	
+	export class Operator {
+	    id: number;
+	    username: string;
+	    full_name: string;
+	    // Go type: time
+	    created_at: any;
+	    // Go type: time
+	    updated_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Operator(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.username = source["username"];
+	        this.full_name = source["full_name"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.updated_at = this.convertValues(source["updated_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RegistrationInput {
+	    citizen_id: number;
+	    registration_type: string;
+	    region: string;
+	    district: string;
+	    settlement: string;
+	    street: string;
+	    house_number: string;
+	    apartment_number: string;
+	    registration_date: string;
+	    basis_document: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RegistrationInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.citizen_id = source["citizen_id"];
+	        this.registration_type = source["registration_type"];
+	        this.region = source["region"];
+	        this.district = source["district"];
+	        this.settlement = source["settlement"];
+	        this.street = source["street"];
+	        this.house_number = source["house_number"];
+	        this.apartment_number = source["apartment_number"];
+	        this.registration_date = source["registration_date"];
+	        this.basis_document = source["basis_document"];
+	    }
+	}
 	export class RegistrationListItem {
 	    id: number;
 	    citizen_id: number;
@@ -494,6 +460,66 @@ export namespace services {
 	        this.page = source["page"];
 	        this.limit = source["limit"];
 	        this.total_pages = source["total_pages"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RegistrationOutput {
+	    id: number;
+	    citizen_id: number;
+	    registration_type: string;
+	    region: string;
+	    district?: string;
+	    settlement: string;
+	    street: string;
+	    house_number: string;
+	    apartment_number?: string;
+	    registration_date: string;
+	    deregistration_date?: string;
+	    basis_document?: string;
+	    is_active: boolean;
+	    // Go type: time
+	    created_at: any;
+	    // Go type: time
+	    updated_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new RegistrationOutput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.citizen_id = source["citizen_id"];
+	        this.registration_type = source["registration_type"];
+	        this.region = source["region"];
+	        this.district = source["district"];
+	        this.settlement = source["settlement"];
+	        this.street = source["street"];
+	        this.house_number = source["house_number"];
+	        this.apartment_number = source["apartment_number"];
+	        this.registration_date = source["registration_date"];
+	        this.deregistration_date = source["deregistration_date"];
+	        this.basis_document = source["basis_document"];
+	        this.is_active = source["is_active"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.updated_at = this.convertValues(source["updated_at"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

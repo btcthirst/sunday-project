@@ -9,11 +9,11 @@ import (
 
 type OperatorService struct {
 	sessionService *SessionService
-	operatorRepo   *repository.OperatorRepository
+	operatorRepo   repository.OperatorRepositoryInterface
 }
 
 // NewOperatorService creates a new OperatorService
-func NewOperatorService(sessionService *SessionService, operatorRepo *repository.OperatorRepository) *OperatorService {
+func NewOperatorService(sessionService *SessionService, operatorRepo repository.OperatorRepositoryInterface) *OperatorService {
 	return &OperatorService{
 		sessionService: sessionService,
 		operatorRepo:   operatorRepo,
@@ -39,13 +39,13 @@ func (a *OperatorService) GetCurrentOperator(ctx context.Context) *models.Operat
 }
 
 func (a *OperatorService) CreateOperator(ctx context.Context, op *models.Operator) error {
-	return a.operatorRepo.CreateOperator(op)
+	return a.operatorRepo.Create(ctx, op)
 }
 
 func (a *OperatorService) GetOperatorByUsername(ctx context.Context, username string) (*models.Operator, error) {
-	return a.operatorRepo.GetOperatorByUsername(username)
+	return a.operatorRepo.GetByUsername(ctx, username)
 }
 
 func (a *OperatorService) OperatorExists(ctx context.Context) (bool, error) {
-	return a.operatorRepo.OperatorExists()
+	return a.operatorRepo.Exists(ctx)
 }

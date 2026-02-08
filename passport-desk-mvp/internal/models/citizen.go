@@ -24,22 +24,6 @@ type Citizen struct {
 	ActiveAddress  string    `json:"active_address,omitempty"` // Computed field
 }
 
-// FamilyRelation represents a relationship between two citizens
-type FamilyRelation struct {
-	ID           int64     `json:"id"`
-	CitizenID    int64     `json:"citizen_id"`
-	MemberID     int64     `json:"member_id"`
-	RelationType string    `json:"relation_type"` // spouse, child, parent, etc.
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-}
-
-// FamilyRelationInput represents input for a family relationship
-type FamilyRelationInput struct {
-	MemberID     int64  `json:"member_id"`
-	RelationType string `json:"relation_type"`
-}
-
 // CitizenInput is the input structure for creating/updating citizens
 type CitizenInput struct {
 	LastName        string                `json:"last_name"`
@@ -56,12 +40,6 @@ type CitizenInput struct {
 	Email           string                `json:"email"`
 	Notes           string                `json:"notes"`
 	FamilyRelations []FamilyRelationInput `json:"family_relations"`
-}
-
-// FamilyMemberOutput represents a family member with their details
-type FamilyMemberOutput struct {
-	CitizenOutput
-	RelationType string `json:"relation_type"`
 }
 
 // CitizenOutput is the output structure (with decrypted fields)
@@ -97,4 +75,26 @@ type CitizenListResult struct {
 	Page       int              `json:"page"`
 	Limit      int              `json:"limit"`
 	TotalPages int              `json:"total_pages"`
+}
+
+// FamilyRelation represents a relationship between two citizens
+type FamilyRelation struct {
+	ID           int64     `json:"id"`
+	CitizenID    int64     `json:"citizen_id"`
+	MemberID     int64     `json:"member_id"`
+	RelationType string    `json:"relation_type"` // spouse, child, parent, etc.
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// FamilyRelationInput represents input for a family relationship
+type FamilyRelationInput struct {
+	MemberID     int64  `json:"member_id"`
+	RelationType string `json:"relation_type"`
+}
+
+// FamilyMemberOutput represents a family member with their details
+type FamilyMemberOutput struct {
+	CitizenOutput
+	RelationType string `json:"relation_type"`
 }

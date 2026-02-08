@@ -22,17 +22,17 @@
 import { ref, h, onMounted } from 'vue'
 import { NTag, useMessage, type DataTableColumns } from 'naive-ui'
 import { GetAuditLogs } from '../../wailsjs/go/main/App'
-import { database } from '../../wailsjs/go/models'
+import { models } from '../../wailsjs/go/models'
 
 const message = useMessage()
-const logs = ref<database.AuditLogOutput[]>([])
+const logs = ref<models.AuditLogOutput[]>([])
 const loading = ref(false)
 
 const pagination = {
   pageSize: 20
 }
 
-const columns: DataTableColumns<database.AuditLogOutput> = [
+const columns: DataTableColumns<models.AuditLogOutput> = [
   {
     title: 'Час',
     key: 'timestamp',

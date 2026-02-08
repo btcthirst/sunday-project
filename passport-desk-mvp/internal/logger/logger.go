@@ -143,5 +143,18 @@ func WithContext(fields ...slog.Attr) *slog.Logger {
 }
 
 func FromContext(ctx context.Context) *slog.Logger {
-	return ctx.Value("logger").(*slog.Logger)
+	if ctx == nil {
+		return Log
+	}
+	if v := ctx.Value("logger"); v != nil {
+		if l, ok := v.(*slog.Logger); ok {
+			return l
+		}
+	}
+	return Log
+}
+
+// NewContext adds logger to context
+func NewContext(ctx context.Context, logger *slog.Logger) context.Context {
+	return context.WithValue(ctx, "logger", logger)
 }

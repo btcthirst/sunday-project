@@ -33,7 +33,7 @@ func (r *RegistrationRepository) Create(ctx context.Context, input *models.Regis
 	}
 
 	// Transaction to handle auto-deregistration
-	tx, err := r.db.DB().Begin()
+	tx, err := r.db.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func (r *RegistrationRepository) Create(ctx context.Context, input *models.Regis
 
 	// If permanent, deregister previous active permanent registrations
 	if input.RegistrationType == "permanent" {
-		_, err := tx.Exec(`
+		_, err := tx.ExecContext(ctx, `
 			UPDATE registrations 
 			SET is_active = 0, deregistration_date = ? 
 			WHERE citizen_id = ? AND registration_type = 'permanent' AND is_active = 1
@@ -52,7 +52,7 @@ func (r *RegistrationRepository) Create(ctx context.Context, input *models.Regis
 	}
 
 	// Insert new registration
-	res, err := tx.Exec(`
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO registrations (
 			citizen_id, registration_type, region, district, settlement, 
 			street, house_number, apartment_number, registration_date, basis_document, is_active
@@ -74,7 +74,7 @@ func (r *RegistrationRepository) Create(ctx context.Context, input *models.Regis
 
 func (r *RegistrationRepository) GetByID(ctx context.Context, id int64) (*models.RegistrationOutput, error) {
 	var reg models.RegistrationOutput
-	row := r.db.DB().QueryRow(`
+	row := r.db.DB().QueryRowContext(ctx, `
 		SELECT id, citizen_id, registration_type, region, district, settlement,
 		       street, house_number, apartment_number, registration_date, 
 		       COALESCE(deregistration_date, ''), COALESCE(basis_document, ''), is_active,
@@ -95,7 +95,7 @@ func (r *RegistrationRepository) GetByID(ctx context.Context, id int64) (*models
 }
 
 func (r *RegistrationRepository) GetByCitizenID(ctx context.Context, citizenID int64) ([]models.RegistrationOutput, error) {
-	rows, err := r.db.DB().Query(`
+	rows, err := r.db.DB().QueryContext(ctx, `
 		SELECT id, citizen_id, registration_type, region, district, settlement,
 		       street, house_number, apartment_number, registration_date, 
 		       COALESCE(deregistration_date, ''), COALESCE(basis_document, ''), is_active
@@ -127,7 +127,7 @@ func (r *RegistrationRepository) Deregister(ctx context.Context, id int64, dereg
 		deregistrationDate = time.Now().Format("2006-01-02")
 	}
 
-	_, err := r.db.DB().Exec(`
+	_, err := r.db.DB().ExecContext(ctx, `
 		UPDATE registrations 
 		SET is_active = 0, deregistration_date = ? 
 		WHERE id = ?
@@ -179,7 +179,7 @@ func (r *RegistrationRepository) ListAll(ctx context.Context, search string, isA
 			c.last_name, c.first_name, c.middle_name, c.birth_date, c.phone, c.tax_number` +
 			queryBase + " ORDER BY r.registration_date DESC"
 
-		rows, err := r.db.DB().Query(sqlQuery, args...)
+		rows, err := r.db.DB().QueryContext(ctx, sqlQuery, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -226,7 +226,7 @@ func (r *RegistrationRepository) ListAll(ctx context.Context, search string, isA
 		}
 	} else {
 		// No search: use SQL pagination
-		err := r.db.DB().QueryRow("SELECT COUNT(*) "+queryBase, args...).Scan(&total)
+		err := r.db.DB().QueryRowContext(ctx, "SELECT COUNT(*) "+queryBase, args...).Scan(&total)
 		if err != nil {
 			return nil, err
 		}
@@ -241,7 +241,7 @@ func (r *RegistrationRepository) ListAll(ctx context.Context, search string, isA
 
 		args = append(args, limit, offset)
 
-		rows, err := r.db.DB().Query(sqlQuery, args...)
+		rows, err := r.db.DB().QueryContext(ctx, sqlQuery, args...)
 		if err != nil {
 			return nil, err
 		}

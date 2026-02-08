@@ -2,6 +2,8 @@ package database
 
 import (
 	"fmt"
+	"log/slog"
+	"passport-desk-mvp/internal/logger"
 	"strings"
 )
 
@@ -132,7 +134,9 @@ func (d *Database) Migrate() error {
 			var count int
 			err := d.db.QueryRow(fmt.Sprintf("SELECT count(*) FROM pragma_table_info('%s') WHERE name='%s'", t.table, colName)).Scan(&count)
 			if err == nil && count == 0 {
-				d.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", t.table, col))
+				if _, err := d.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", t.table, col)); err != nil {
+					logger.Error("Migration: Failed to add column", slog.String("table", t.table), slog.String("column", col), slog.String("error", err.Error()))
+				}
 			}
 		}
 	}
@@ -146,14 +150,18 @@ func (d *Database) Migrate() error {
 			BEGIN
 				UPDATE %s SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
 			END;`, table, table, table)
-		d.db.Exec(triggerQuery)
+		if _, err := d.db.Exec(triggerQuery); err != nil {
+			logger.Error("Migration: Failed to create trigger", slog.String("table", table), slog.String("error", err.Error()))
+		}
 	}
 
 	// Add passport_type if not exists for existing databases
 	var count int
 	err := d.db.QueryRow("SELECT count(*) FROM pragma_table_info('citizens') WHERE name='passport_type'").Scan(&count)
 	if err == nil && count == 0 {
-		d.db.Exec("ALTER TABLE citizens ADD COLUMN passport_type TEXT DEFAULT 'old'")
+		if _, err := d.db.Exec("ALTER TABLE citizens ADD COLUMN passport_type TEXT DEFAULT 'old'"); err != nil {
+			logger.Error("Migration: Failed to add passport_type to citizens", slog.String("error", err.Error()))
+		}
 	}
 
 	return nil

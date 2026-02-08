@@ -242,7 +242,7 @@ import {
   CreateCitizen, GetCitizen, UpdateCitizen, GenerateCitizenCertificate,
   SearchCitizens, GetFamilyMembers
 } from '../../wailsjs/go/main/App'
-import { services } from '../../wailsjs/go/models'
+import { models } from '../../wailsjs/go/models'
 import RegistrationHistory from '../components/RegistrationHistory.vue'
 import CertificateOptionsModal from '../components/CertificateOptionsModal.vue'
 
@@ -259,7 +259,7 @@ const citizenId = computed(() => {
   return id ? parseInt(id as string) : 0
 })
 
-const formValue = ref(new services.CitizenInput())
+const formValue = ref(new models.CitizenInput())
 
 // Initialize defaults
 formValue.value.gender = 'M'
@@ -398,7 +398,7 @@ onMounted(async () => {
       }
 
       // Map output to input format
-      const input = new services.CitizenInput({
+      const input = new models.CitizenInput({
         last_name: citizen.last_name,
         first_name: citizen.first_name,
         middle_name: citizen.middle_name,
@@ -470,7 +470,7 @@ async function handleSave() {
 const printing = ref(false)
 const showCertModal = ref(false)
 
-async function handleCertConfirm(opts: services.FamilyCertificateOptions) {
+async function handleCertConfirm(opts: models.FamilyCertificateOptions) {
   printing.value = true
   try {
     const path = await GenerateCitizenCertificate(citizenId.value, opts)

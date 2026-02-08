@@ -33,7 +33,7 @@
 import { ref, onMounted, h, watch } from 'vue'
 import { DataTableColumns, NTag, NButton, useMessage, useDialog, NSpace, NIcon, NDataTable } from 'naive-ui'
 import { GetRegistrationHistory, DeregisterCitizen } from '../../wailsjs/go/main/App'
-import { database } from '../../wailsjs/go/models'
+import { models } from '../../wailsjs/go/models'
 import RegistrationModal from './RegistrationModal.vue'
 
 const props = defineProps<{
@@ -43,10 +43,10 @@ const props = defineProps<{
 const message = useMessage()
 const dialog = useDialog()
 const loading = ref(false)
-const history = ref<database.RegistrationOutput[]>([])
+const history = ref<models.RegistrationOutput[]>([])
 const showModal = ref(false)
 
-const columns: DataTableColumns<database.RegistrationOutput> = [
+const columns: DataTableColumns<models.RegistrationOutput> = [
   {
     title: 'Дата',
     key: 'registration_date',
@@ -124,7 +124,7 @@ async function loadHistory() {
   }
 }
 
-function confirmDeregister(row: database.RegistrationOutput) {
+function confirmDeregister(row: models.RegistrationOutput) {
   dialog.warning({
     title: 'Зняття з реєстрації',
     content: 'Ви впевнені, що хочете зняти громадянина з реєстрації?',

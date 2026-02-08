@@ -85,10 +85,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, defineProps, defineEmits, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { FormInst, useMessage } from 'naive-ui'
 import { CreateRegistration } from '../../wailsjs/go/main/App'
-import { database } from '../../wailsjs/go/models'
+import { models } from '../../wailsjs/go/models'
 
 const props = defineProps<{
   show: boolean
@@ -101,7 +101,7 @@ const message = useMessage()
 const formRef = ref<FormInst | null>(null)
 const loading = ref(false)
 
-const formValue = ref(new database.RegistrationInput({
+const formValue = ref(new models.RegistrationInput({
   registration_type: 'permanent',
   region: 'Вінницька', // Default
   registration_date: new Date().toISOString().split('T')[0]
@@ -110,7 +110,7 @@ const formValue = ref(new database.RegistrationInput({
 watch(() => props.show, (newVal) => {
   if (newVal) {
     // Reset form when opened
-    formValue.value = new database.RegistrationInput({
+    formValue.value = new models.RegistrationInput({
       citizen_id: props.citizenId,
       registration_type: 'permanent',
       region: 'Вінницька',

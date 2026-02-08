@@ -47,12 +47,12 @@
 
 <script setup lang="ts">
 import { ref, reactive, watch } from 'vue'
-import { services } from '../../wailsjs/go/models'
+import { models } from '../../wailsjs/go/models'
 
 const props = defineProps<{
   show: boolean
   title?: string
-  initialOptions?: Partial<services.FamilyCertificateOptions>
+  initialOptions?: Partial<models.FamilyCertificateOptions>
 }>()
 
 const emit = defineEmits(['update:show', 'confirm'])

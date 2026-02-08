@@ -37,7 +37,6 @@ func NewSessionService(currentOperator *models.Operator) *SessionService {
 
 // IsAuthenticated returns whether a user is authenticated
 func (s *SessionService) IsAuthenticated() bool {
-	logger.Info("Checking if authenticated")
 	s.Mu.RLock()
 	defer s.Mu.RUnlock()
 	return s.CurrentOperator != nil && !s.IsLocked
@@ -46,6 +45,10 @@ func (s *SessionService) IsAuthenticated() bool {
 // InactivityChecker monitors for inactivity and locks the app
 func (s *SessionService) InactivityChecker() {
 	logger.Info("Inactivity checker started")
+	if s.Ctx == nil {
+		logger.Error("InactivityChecker started with nil context")
+		return
+	}
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -54,9 +57,13 @@ func (s *SessionService) InactivityChecker() {
 		case <-ticker.C:
 			s.Mu.Lock()
 			if !s.IsLocked && s.CurrentOperator != nil {
+				// Don't auto-lock if no operator is loaded yet to avoid race conditions during startup
 				if time.Since(s.LastActivity) > inactivityTimeout {
 					s.IsLocked = true
-					runtime.EventsEmit(s.Ctx, "session-locked")
+					// Emit event to frontend
+					if s.Ctx != nil {
+						runtime.EventsEmit(s.Ctx, "session-locked")
+					}
 				}
 			}
 			s.Mu.Unlock()
@@ -64,6 +71,13 @@ func (s *SessionService) InactivityChecker() {
 			return
 		}
 	}
+}
+
+// GetCurrentOperator returns the currently logged in operator
+func (s *SessionService) GetCurrentOperator() *models.Operator {
+	s.Mu.RLock()
+	defer s.Mu.RUnlock()
+	return s.CurrentOperator
 }
 
 // UpdateActivity updates the last activity timestamp
