@@ -115,3 +115,112 @@ func TestCitizenService_GetByID(t *testing.T) {
 		t.Error("Expected audit log to be called")
 	}
 }
+
+func TestCitizenService_Update(t *testing.T) {
+	mockRepo := &MockCitizenRepo{}
+	crypto := security.NewCrypto([]byte("12345678901234567890123456789012"))
+	mockAuditRepo := &MockAuditLogRepo{}
+	sessionService := &SessionService{
+		CurrentOperator: &models.Operator{ID: 1, Username: "test"},
+	}
+	auditService := NewAuditLogService(mockAuditRepo, sessionService)
+	service := NewCitizenService(crypto, mockRepo, auditService)
+	ctx := internalLogger.NewContext(context.Background(), slog.New(slog.NewTextHandler(os.Stdout, nil)))
+
+	mockRepo.UpdateFunc = func(ctx context.Context, id int64, citizen *models.CitizenInput) error {
+		if id != 1 {
+			t.Errorf("Expected ID 1, got %d", id)
+		}
+		return nil
+	}
+	mockRepo.GetByIDFunc = func(ctx context.Context, id int64) (*models.CitizenOutput, error) {
+		return &models.CitizenOutput{ID: id, LastName: "Updated"}, nil
+	}
+
+	input := &models.CitizenInput{
+		LastName:       "Updated",
+		FirstName:      "User",
+		BirthDate:      "1990-01-01",
+		PassportSeries: "AA",
+		PassportNumber: "123456",
+		PassportType:   "old",
+		TaxNumber:      "1234567890",
+		Gender:         "M",
+	}
+
+	result, err := service.Update(ctx, 1, input)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if result.LastName != "Updated" {
+		t.Errorf("Expected name Updated, got %s", result.LastName)
+	}
+}
+
+func TestCitizenService_Delete(t *testing.T) {
+	mockRepo := &MockCitizenRepo{}
+	crypto := security.NewCrypto([]byte("12345678901234567890123456789012"))
+	mockAuditRepo := &MockAuditLogRepo{}
+	sessionService := &SessionService{
+		CurrentOperator: &models.Operator{ID: 1, Username: "test"},
+	}
+	auditService := NewAuditLogService(mockAuditRepo, sessionService)
+	service := NewCitizenService(crypto, mockRepo, auditService)
+	ctx := internalLogger.NewContext(context.Background(), slog.New(slog.NewTextHandler(os.Stdout, nil)))
+
+	mockRepo.GetByIDFunc = func(ctx context.Context, id int64) (*models.CitizenOutput, error) {
+		return &models.CitizenOutput{ID: id, LastName: "ToDel"}, nil
+	}
+	mockRepo.SoftDeleteFunc = func(ctx context.Context, id int64) error {
+		return nil
+	}
+
+	err := service.Delete(ctx, 1)
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+}
+
+func TestCitizenService_Restore(t *testing.T) {
+	mockRepo := &MockCitizenRepo{}
+	crypto := security.NewCrypto([]byte("12345678901234567890123456789012"))
+	mockAuditRepo := &MockAuditLogRepo{}
+	sessionService := &SessionService{
+		CurrentOperator: &models.Operator{ID: 1, Username: "test"},
+	}
+	auditService := NewAuditLogService(mockAuditRepo, sessionService)
+	service := NewCitizenService(crypto, mockRepo, auditService)
+	ctx := internalLogger.NewContext(context.Background(), slog.New(slog.NewTextHandler(os.Stdout, nil)))
+
+	mockRepo.GetByIDFunc = func(ctx context.Context, id int64) (*models.CitizenOutput, error) {
+		return &models.CitizenOutput{ID: id, LastName: "ToRestore"}, nil
+	}
+	mockRepo.RestoreFunc = func(ctx context.Context, id int64) error {
+		return nil
+	}
+
+	err := service.Restore(ctx, 1)
+	if err != nil {
+		t.Fatalf("Restore failed: %v", err)
+	}
+}
+
+func TestCitizenService_Search(t *testing.T) {
+	mockRepo := &MockCitizenRepo{}
+	crypto := security.NewCrypto([]byte("12345678901234567890123456789012"))
+	mockAuditRepo := &MockAuditLogRepo{}
+	service := NewCitizenService(crypto, mockRepo, NewAuditLogService(mockAuditRepo, nil))
+	ctx := internalLogger.NewContext(context.Background(), slog.New(slog.NewTextHandler(os.Stdout, nil)))
+
+	mockRepo.SearchByNameFunc = func(ctx context.Context, query string, limit int) ([]*models.CitizenOutput, error) {
+		return []*models.CitizenOutput{{ID: 1, LastName: "Found"}}, nil
+	}
+
+	results, err := service.Search(ctx, "Found", "name")
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 || results[0].LastName != "Found" {
+		t.Error("Search results mismatch")
+	}
+}

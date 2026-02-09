@@ -2,68 +2,66 @@ package services
 
 import (
 	"context"
-	"log/slog"
-	"os"
-	"passport-desk-mvp/internal/logger"
 	"passport-desk-mvp/internal/models"
 	"testing"
 )
 
 func TestAuditLogService_LogAudit(t *testing.T) {
 	mockRepo := &MockAuditLogRepo{}
-	sessionService := NewSessionService(&models.Operator{ID: 1, Username: "admin"})
-	sessionService.IsLocked = false
-	service := NewAuditLogService(mockRepo, sessionService)
 
-	l := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	ctx := logger.NewContext(context.Background(), l)
+	// Case 1: Unauthenticated
+	sessionSvc := &SessionService{}
+	service := NewAuditLogService(mockRepo, sessionSvc)
 
-	called := false
-	mockRepo.LogAuditFunc = func(ctx context.Context, log *models.AuditLog) error {
-		called = true
-		if log.ActionType != "TEST_ACTION" {
-			t.Errorf("Expected action TEST_ACTION, got %s", log.ActionType)
+	log := &models.AuditLog{ActionType: "CREATE", TableName: "test"}
+	err := service.LogAudit(context.Background(), log)
+	if err == nil || err.Error() != "not authenticated" {
+		t.Errorf("Expected not authenticated error, got %v", err)
+	}
+
+	// Case 2: Authenticated, operator ID should be filled
+	sessionSvc = &SessionService{
+		CurrentOperator: &models.Operator{ID: 100},
+	}
+	service = NewAuditLogService(mockRepo, sessionSvc)
+
+	repoCalled := false
+	mockRepo.LogAuditFunc = func(ctx context.Context, l *models.AuditLog) error {
+		repoCalled = true
+		if l.OperatorID != 100 {
+			t.Errorf("Expected OperatorID 100, got %d", l.OperatorID)
 		}
 		return nil
 	}
 
-	err := service.LogAudit(ctx, &models.AuditLog{
-		ActionType:  "TEST_ACTION",
-		TableName:   "test_table",
-		RecordID:    1,
-		Description: "Testing log",
-	})
+	err = service.LogAudit(context.Background(), &models.AuditLog{ActionType: "UPDATE"})
 	if err != nil {
 		t.Fatalf("LogAudit failed: %v", err)
 	}
-
-	if !called {
-		t.Error("Mock repo's LogAudit was not called")
+	if !repoCalled {
+		t.Error("Repo LogAudit was not called")
 	}
 }
 
 func TestAuditLogService_GetAuditLogs(t *testing.T) {
 	mockRepo := &MockAuditLogRepo{}
-	sessionService := NewSessionService(&models.Operator{ID: 1, Username: "admin"})
-	sessionService.IsLocked = false
-	service := NewAuditLogService(mockRepo, sessionService)
-
-	l := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	ctx := logger.NewContext(context.Background(), l)
+	sessionSvc := &SessionService{
+		CurrentOperator: &models.Operator{ID: 1},
+	}
+	service := NewAuditLogService(mockRepo, sessionSvc)
 
 	mockRepo.GetAuditLogsFunc = func(ctx context.Context, limit int) ([]models.AuditLogOutput, error) {
-		return []models.AuditLogOutput{
-			{AuditLog: models.AuditLog{ID: 1, ActionType: "LOGIN"}},
-			{AuditLog: models.AuditLog{ID: 2, ActionType: "CREATE"}},
-		}, nil
+		if limit != 100 { // Default limit if invalid passed
+			t.Errorf("Expected limit 100, got %d", limit)
+		}
+		return []models.AuditLogOutput{{AuditLog: models.AuditLog{ID: 1}}}, nil
 	}
 
-	logs, err := service.GetAuditLogs(ctx, 10)
+	logs, err := service.GetAuditLogs(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("GetAuditLogs failed: %v", err)
 	}
-
-	if len(logs) != 2 {
-		t.Errorf("Expected 2 logs, got %d", len(logs))
+	if len(logs) != 1 {
+		t.Errorf("Expected 1 log, got %d", len(logs))
 	}
 }
