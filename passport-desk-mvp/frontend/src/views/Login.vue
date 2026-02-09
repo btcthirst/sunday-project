@@ -9,6 +9,7 @@
         </n-icon>
         <h1>Паспортний стіл</h1>
         <p v-if="isFirstRun">Створіть обліковий запис оператора</p>
+        <p v-else-if="isRecoveryMode">Відновлення доступу</p>
         <p v-else>Вхід в систему</p>
       </div>
 
@@ -53,7 +54,7 @@
         </template>
 
         <!-- Regular login form -->
-        <template v-else>
+        <template v-else-if="!isRecoveryMode">
           <n-form-item label="Ім'я користувача" path="username">
             <n-input 
               v-model:value="formData.username" 
@@ -72,6 +73,49 @@
               @keyup.enter="handleSubmit"
             />
           </n-form-item>
+          
+          <div class="form-actions">
+            <n-button quaternary size="small" type="primary" @click="isRecoveryMode = true">
+              Забули пароль?
+            </n-button>
+          </div>
+        </template>
+
+        <!-- Recovery form -->
+        <template v-else>
+          <n-form-item label="Майстер-ключ" path="masterKey">
+            <n-input
+              v-model:value="formData.masterKey"
+              placeholder="Введіть ваш майстер-ключ"
+              :disabled="loading"
+            />
+          </n-form-item>
+
+          <n-form-item label="Новий пароль" path="password">
+            <n-input
+              v-model:value="formData.password"
+              type="password"
+              show-password-on="click"
+              placeholder="Введіть новий пароль"
+              :disabled="loading"
+            />
+          </n-form-item>
+
+          <n-form-item label="Підтвердження пароля" path="confirmPassword">
+            <n-input
+              v-model:value="formData.confirmPassword"
+              type="password"
+              show-password-on="click"
+              placeholder="Повторіть пароль"
+              :disabled="loading"
+            />
+          </n-form-item>
+
+          <div class="form-actions">
+            <n-button quaternary size="small" @click="isRecoveryMode = false">
+              Повернутися до входу
+            </n-button>
+          </div>
         </template>
 
         <n-button
@@ -81,7 +125,7 @@
           :loading="loading"
           @click="handleSubmit"
         >
-          {{ isFirstRun ? 'Створити та увійти' : 'Увійти' }}
+          {{ isFirstRun ? 'Створити та увійти' : (isRecoveryMode ? 'Відновити пароль' : 'Увійти') }}
         </n-button>
       </n-form>
 
@@ -89,6 +133,29 @@
         <n-alert type="error" :title="error" />
       </div>
     </div>
+
+    <!-- Master Key Display Modal -->
+    <n-modal
+      v-model:show="showMasterKeyModal"
+      preset="card"
+      title="Збережіть ваш майстер-ключ"
+      style="width: 500px"
+      :closable="false"
+      :mask-closable="false"
+    >
+      <n-alert type="warning" title="Важливо!" class="mb-4">
+        Цей ключ знадобиться для відновлення доступу, якщо ви забудете пароль. Збережіть його в надійному місці!
+      </n-alert>
+      
+      <n-input-group>
+        <n-input :value="generatedMasterKey" readonly text-align="center" style="font-family: monospace; font-size: 1.2rem;" />
+        <n-button type="primary" @click="copyMasterKey">Копіювати</n-button>
+      </n-input-group>
+
+      <template #footer>
+        <n-button type="primary" block @click="finishSetup">Я зберіг ключ, продовжити</n-button>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -96,12 +163,16 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { IsFirstRun, Login, SetupInitialOperator } from '../../wailsjs/go/main/App'
+import { IsFirstRun, Login, SetupInitialOperator, RecoverByMasterKey } from '../../wailsjs/go/main/App'
+import { ClipboardSetText } from '../../wailsjs/runtime'
 
 const router = useRouter()
 const message = useMessage()
 
 const isFirstRun = ref(true)
+const isRecoveryMode = ref(false)
+const showMasterKeyModal = ref(false)
+const generatedMasterKey = ref('')
 const loading = ref(false)
 const error = ref('')
 
@@ -110,7 +181,8 @@ const formData = ref({
   username: '',
   password: '',
   confirmPassword: '',
-  fullName: ''
+  fullName: '',
+  masterKey: ''
 })
 
 const rules = {
@@ -132,14 +204,19 @@ const rules = {
   confirmPassword: {
     required: true,
     validator: (_rule: any, value: string) => {
-      if (!value) {
+      if ((isFirstRun.value || isRecoveryMode.value) && !value) {
         return new Error('Підтвердіть пароль')
       }
-      if (value !== formData.value.password) {
+      if ((isFirstRun.value || isRecoveryMode.value) && value !== formData.value.password) {
         return new Error('Паролі не співпадають')
       }
       return true
     },
+    trigger: 'blur'
+  },
+  masterKey: {
+    required: true,
+    message: 'Введіть майстер-ключ',
     trigger: 'blur'
   }
 }
@@ -166,22 +243,39 @@ async function handleSubmit() {
 
   try {
     if (isFirstRun.value) {
-      await SetupInitialOperator(
+      const mk = await SetupInitialOperator(
         formData.value.username,
         formData.value.password,
         formData.value.fullName
       )
-      message.success('Обліковий запис створено!')
+      generatedMasterKey.value = mk
+      showMasterKeyModal.value = true
+      return // Wait for modal close
+    } else if (isRecoveryMode.value) {
+      await RecoverByMasterKey(formData.value.masterKey, formData.value.password)
+      message.success('Пароль успішно змінено!')
+      isRecoveryMode.value = false
+      formData.value.password = ''
+      formData.value.confirmPassword = ''
     } else {
       await Login(formData.value.username, formData.value.password)
+      router.push('/dashboard')
     }
-    
-    router.push('/dashboard')
   } catch (e: any) {
     error.value = e.toString()
   } finally {
     loading.value = false
   }
+}
+
+async function copyMasterKey() {
+  await ClipboardSetText(generatedMasterKey.value)
+  message.success('Скопійовано!')
+}
+
+function finishSetup() {
+  showMasterKeyModal.value = false
+  router.push('/dashboard')
 }
 </script>
 
@@ -225,5 +319,16 @@ async function handleSubmit() {
 
 .error-message {
   margin-top: 16px;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -12px;
+  margin-bottom: 24px;
+}
+
+.mb-4 {
+  margin-bottom: 16px;
 }
 </style>

@@ -102,3 +102,29 @@ func TestRegistrationRepository_GetByCitizenID(t *testing.T) {
 		t.Errorf("Expected 2 registrations, got %d", len(regs))
 	}
 }
+
+func TestRegistrationRepository_ListAll(t *testing.T) {
+	db := setupTestDB(t)
+	citizenRepo := NewCitizenRepository(db)
+	regRepo := NewRegistrationRepository(db)
+	ctx := context.Background()
+
+	c1, _ := citizenRepo.Create(ctx, &models.CitizenInput{LastName: "C1", FirstName: "U", BirthDate: "2000-01-01", Gender: "M"})
+	c2, _ := citizenRepo.Create(ctx, &models.CitizenInput{LastName: "C2", FirstName: "U", BirthDate: "2000-01-02", Gender: "F"})
+
+	regRepo.Create(ctx, &models.RegistrationInput{CitizenID: c1, RegistrationType: "permanent", Region: "R1", Settlement: "S1", Street: "St1", HouseNumber: "1", RegistrationDate: "2020-01-01"})
+	regRepo.Create(ctx, &models.RegistrationInput{CitizenID: c2, RegistrationType: "temporary", Region: "R2", Settlement: "S2", Street: "St2", HouseNumber: "2", RegistrationDate: "2021-01-01"})
+
+	// ListAll(ctx, search, isActive, page, limit)
+	result, err := regRepo.ListAll(ctx, "", nil, 1, 10)
+	if err != nil {
+		t.Fatalf("ListAll failed: %v", err)
+	}
+
+	if result.Total != 2 {
+		t.Errorf("Expected total 2, got %d", result.Total)
+	}
+	if len(result.Items) != 2 {
+		t.Errorf("Expected 2 items, got %d", len(result.Items))
+	}
+}

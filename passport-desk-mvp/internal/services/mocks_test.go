@@ -166,3 +166,62 @@ func (m *MockRegistrationRepo) ListAll(ctx context.Context, search string, isAct
 	}
 	return &models.RegistrationListResult{}, nil
 }
+
+// MockOperatorRepo implements repository.OperatorRepositoryInterface
+type MockOperatorRepo struct {
+	CreateFunc        func(ctx context.Context, op *models.Operator) error
+	GetByUsernameFunc func(ctx context.Context, username string) (*models.Operator, error)
+	ExistsFunc        func(ctx context.Context) (bool, error)
+	GetAllFunc        func(ctx context.Context) ([]*models.Operator, error)
+	UpdateFunc        func(ctx context.Context, op *models.Operator) error
+}
+
+func (m *MockOperatorRepo) Create(ctx context.Context, op *models.Operator) error {
+	if m.CreateFunc != nil {
+		return m.CreateFunc(ctx, op)
+	}
+	return nil
+}
+func (m *MockOperatorRepo) GetByUsername(ctx context.Context, username string) (*models.Operator, error) {
+	if m.GetByUsernameFunc != nil {
+		return m.GetByUsernameFunc(ctx, username)
+	}
+	return nil, nil
+}
+func (m *MockOperatorRepo) Exists(ctx context.Context) (bool, error) {
+	if m.ExistsFunc != nil {
+		return m.ExistsFunc(ctx)
+	}
+	return true, nil
+}
+func (m *MockOperatorRepo) GetAll(ctx context.Context) ([]*models.Operator, error) {
+	if m.GetAllFunc != nil {
+		return m.GetAllFunc(ctx)
+	}
+	return []*models.Operator{}, nil
+}
+func (m *MockOperatorRepo) Update(ctx context.Context, op *models.Operator) error {
+	if m.UpdateFunc != nil {
+		return m.UpdateFunc(ctx, op)
+	}
+	return nil
+}
+
+// MockReportRepo implements repository.ReportRepositoryInterface
+type MockReportRepo struct {
+	ExportRegisteredCitizensFunc func(ctx context.Context, from, to string) ([]models.CitizenOutput, error)
+	GetStatsFunc                 func(ctx context.Context) (*models.StatsOutput, error)
+}
+
+func (m *MockReportRepo) ExportRegisteredCitizens(ctx context.Context, from, to string) ([]models.CitizenOutput, error) {
+	if m.ExportRegisteredCitizensFunc != nil {
+		return m.ExportRegisteredCitizensFunc(ctx, from, to)
+	}
+	return []models.CitizenOutput{}, nil
+}
+func (m *MockReportRepo) GetStats(ctx context.Context) (*models.StatsOutput, error) {
+	if m.GetStatsFunc != nil {
+		return m.GetStatsFunc(ctx)
+	}
+	return &models.StatsOutput{}, nil
+}

@@ -261,3 +261,102 @@ func TestCitizenRepository_UpdateWithRelations(t *testing.T) {
 		t.Fatalf("Expected B to have A as husband, got %v", f2)
 	}
 }
+
+func TestCitizenRepository_RemoveFamilyMember(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewCitizenRepository(db)
+	ctx := context.Background()
+
+	id1, _ := repo.Create(ctx, &models.CitizenInput{LastName: "A", FirstName: "A", Gender: "M", BirthDate: "1970-01-01", PassportSeries: "AA", PassportNumber: "1"})
+	id2, _ := repo.Create(ctx, &models.CitizenInput{LastName: "B", FirstName: "B", Gender: "F", BirthDate: "1975-01-01", PassportSeries: "AA", PassportNumber: "2"})
+
+	_ = repo.AddFamilyMember(ctx, id1, id2, "Дружина")
+
+	// Verify they are linked
+	f1, _ := repo.GetFamilyMembers(ctx, id1)
+	if len(f1) != 1 {
+		t.Fatalf("Expected 1 family member, got %d", len(f1))
+	}
+
+	// Remove relationship
+	err := repo.RemoveFamilyMember(ctx, id1, id2)
+	if err != nil {
+		t.Fatalf("RemoveFamilyMember failed: %v", err)
+	}
+
+	// Verify they are unlinked
+	f1, _ = repo.GetFamilyMembers(ctx, id1)
+	if len(f1) != 0 {
+		t.Errorf("Expected 0 family members for A, got %d", len(f1))
+	}
+
+	f2, _ := repo.GetFamilyMembers(ctx, id2)
+	if len(f2) != 0 {
+		t.Errorf("Expected 0 family members for B, got %d", len(f2))
+	}
+}
+
+func TestCitizenRepository_Exists(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewCitizenRepository(db)
+	ctx := context.Background()
+
+	id, _ := repo.Create(ctx, &models.CitizenInput{LastName: "A", FirstName: "A", Gender: "M", BirthDate: "1970-01-01", PassportSeries: "AA", PassportNumber: "1"})
+
+	exists, err := repo.Exists(ctx, id)
+	if err != nil {
+		t.Fatalf("Exists failed: %v", err)
+	}
+	if !exists {
+		t.Error("Expected citizen to exist")
+	}
+
+	exists, err = repo.Exists(ctx, 999)
+	if err != nil {
+		t.Fatalf("Exists failed: %v", err)
+	}
+	if exists {
+		t.Error("Expected citizen to not exist")
+	}
+}
+
+func TestCitizenRepository_GetByPassport(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewCitizenRepository(db)
+	ctx := context.Background()
+
+	id, _ := repo.Create(ctx, &models.CitizenInput{LastName: "A", FirstName: "A", Gender: "M", BirthDate: "1970-01-01", PassportSeries: "AA", PassportNumber: "123"})
+
+	// GetByPassport currently returns the FIRST citizen in the results (as noted in implementation)
+	// This will change once hash indexing is implemented.
+	citizen, err := repo.GetByPassport(ctx, "AA", "123")
+	if err != nil {
+		t.Fatalf("GetByPassport failed: %v", err)
+	}
+	if citizen.ID != id {
+		t.Errorf("Expected citizen ID %d, got %d", id, citizen.ID)
+	}
+}
+
+func TestCitizenRepository_GetAll(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewCitizenRepository(db)
+	ctx := context.Background()
+
+	repo.Create(ctx, &models.CitizenInput{LastName: "B", FirstName: "B", Gender: "M", BirthDate: "1970-01-01", PassportSeries: "AA", PassportNumber: "1"})
+	repo.Create(ctx, &models.CitizenInput{LastName: "A", FirstName: "A", Gender: "F", BirthDate: "1975-01-01", PassportSeries: "AA", PassportNumber: "2"})
+
+	citizens, err := repo.GetAll(ctx)
+	if err != nil {
+		t.Fatalf("GetAll failed: %v", err)
+	}
+
+	if len(citizens) != 2 {
+		t.Errorf("Expected 2 citizens, got %d", len(citizens))
+	}
+
+	// Should be ordered by last name
+	if citizens[0].LastName != "A" {
+		t.Errorf("Expected first citizen to be A, got %s", citizens[0].LastName)
+	}
+}

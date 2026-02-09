@@ -47,6 +47,7 @@ func TestCitizenService_Create(t *testing.T) {
 		BirthDate:      "1990-01-01",
 		PassportSeries: "AA",
 		PassportNumber: "123456",
+		PassportType:   "old",
 		TaxNumber:      "1234567890",
 		Gender:         "M",
 		Phone:          "123",

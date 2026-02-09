@@ -50,13 +50,15 @@ export function Login(arg1:string,arg2:string):Promise<void>;
 
 export function Logout():Promise<void>;
 
+export function RecoverByMasterKey(arg1:string,arg2:string):Promise<void>;
+
 export function RemoveFamilyMember(arg1:number,arg2:number):Promise<void>;
 
 export function RestoreCitizen(arg1:number):Promise<void>;
 
 export function SearchCitizens(arg1:string,arg2:string):Promise<Array<models.CitizenOutput>>;
 
-export function SetupInitialOperator(arg1:string,arg2:string,arg3:string):Promise<void>;
+export function SetupInitialOperator(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function Unlock(arg1:string):Promise<void>;
 

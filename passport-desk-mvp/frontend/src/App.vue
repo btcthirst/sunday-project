@@ -14,7 +14,7 @@
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { darkTheme, ukUA, dateUkUA } from 'naive-ui'
-import { EventsOn } from '../wailsjs/runtime'
+import { WindowShow, EventsOn } from '../wailsjs/runtime'
 
 const router = useRouter()
 
@@ -22,6 +22,9 @@ onMounted(() => {
   EventsOn('session-locked', () => {
     router.push({ name: 'Login' })
   })
+  
+  // Show window once app is mounted to avoid white/dark flicker
+  WindowShow()
 })
 </script>
 
@@ -30,7 +33,6 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background-color: #18181c;
 }
 
 #app {

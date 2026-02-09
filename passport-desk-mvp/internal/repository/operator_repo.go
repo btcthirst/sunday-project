@@ -50,3 +50,31 @@ func (d *OperatorRepository) Exists(ctx context.Context) (bool, error) {
 	}
 	return count > 0, nil
 }
+
+// GetAll retrieves all operators
+func (d *OperatorRepository) GetAll(ctx context.Context) ([]*models.Operator, error) {
+	rows, err := d.db.DB().QueryContext(ctx, `SELECT id, username, password_hash, full_name, created_at, updated_at FROM operators`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var operators []*models.Operator
+	for rows.Next() {
+		op := &models.Operator{}
+		if err := rows.Scan(&op.ID, &op.Username, &op.PasswordHash, &op.FullName, &op.CreatedAt, &op.UpdatedAt); err != nil {
+			return nil, err
+		}
+		operators = append(operators, op)
+	}
+	return operators, nil
+}
+
+// Update updates an operator's data (e.g. password hash)
+func (d *OperatorRepository) Update(ctx context.Context, op *models.Operator) error {
+	_, err := d.db.DB().ExecContext(ctx,
+		`UPDATE operators SET username = ?, password_hash = ?, full_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		op.Username, op.PasswordHash, op.FullName, op.ID,
+	)
+	return err
+}

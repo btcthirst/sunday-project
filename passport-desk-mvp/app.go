@@ -139,39 +139,75 @@ func (a *App) IsFirstRun() bool {
 }
 
 // SetupInitialOperator creates the first operator and initializes the database
-func (a *App) SetupInitialOperator(username, password, fullName string) error {
+func (a *App) SetupInitialOperator(username, password, fullName string) (string, error) {
 	logger.Info("Setting up initial operator")
 	if !a.IsFirstRun() {
 		logger.Error("Initial setup already completed")
-		return errors.New("initial setup already completed")
+		return "", errors.New("initial setup already completed")
 	}
 
 	// Generate salt
 	salt, err := security.GenerateSalt()
 	if err != nil {
 		logger.Error("Failed to generate salt", slog.String("error", err.Error()))
-		return err
+		return "", err
 	}
 
 	// Save salt
 	if err := a.container.Keystore.SaveSalt(salt); err != nil {
 		logger.Error("Failed to save salt", slog.String("error", err.Error()))
-		return err
+		return "", err
 	}
 
-	// Derive encryption key
-	key := security.DeriveKey(password, salt)
-	if err := a.container.InitializeWithKey(key, a.container.Keystore.GetDBPath()); err != nil {
-		logger.Error("Failed to initialize database", slog.String("error", err.Error()))
-		return err
+	// Generate Master Secret (the actual key for the DB)
+	dbSecret, err := security.GenerateDBSecret()
+	if err != nil {
+		logger.Error("Failed to generate db secret", slog.String("error", err.Error()))
+		return "", err
 	}
-	a.container.SessionService.EncryptionKey = key
+
+	// Generate Master Recovery Key
+	masterKey, err := security.GenerateRecoveryKey()
+	if err != nil {
+		logger.Error("Failed to generate recovery key", slog.String("error", err.Error()))
+		return "", err
+	}
+
+	// Derive wrapping keys
+	operatorWrappingKey := security.DeriveKey(password, salt)
+	masterWrappingKey := security.DeriveKey(masterKey, salt)
+
+	// Wrap DB Secret
+	userWrapped, err := security.WrapSecret(dbSecret, operatorWrappingKey)
+	if err != nil {
+		logger.Error("Failed to wrap user secret", slog.String("error", err.Error()))
+		return "", err
+	}
+
+	masterWrapped, err := security.WrapSecret(dbSecret, masterWrappingKey)
+	if err != nil {
+		logger.Error("Failed to wrap master secret", slog.String("error", err.Error()))
+		return "", err
+	}
+
+	// Save wrapped secrets
+	if err := a.container.Keystore.SaveWrappedSecrets(userWrapped, masterWrapped); err != nil {
+		logger.Error("Failed to save wrapped secrets", slog.String("error", err.Error()))
+		return "", err
+	}
+
+	// Initialize DB with Master Secret
+	if err := a.container.InitializeWithKey(dbSecret, a.container.Keystore.GetDBPath()); err != nil {
+		logger.Error("Failed to initialize database", slog.String("error", err.Error()))
+		return "", err
+	}
+	a.container.SessionService.EncryptionKey = dbSecret
 
 	// Hash password
 	passwordHash, err := security.HashPassword(password)
 	if err != nil {
 		logger.Error("Failed to hash password", slog.String("error", err.Error()))
-		return err
+		return "", err
 	}
 
 	// Create operator
@@ -182,7 +218,7 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 	}
 	if err := a.container.OperatorService.CreateOperator(a.ctx, operator); err != nil {
 		logger.Error("Failed to create operator", slog.String("error", err.Error()))
-		return err
+		return "", err
 	}
 
 	// Log to audit
@@ -201,7 +237,63 @@ func (a *App) SetupInitialOperator(username, password, fullName string) error {
 	a.container.SessionService.LastActivity = time.Now()
 	a.container.SessionService.Mu.Unlock()
 
-	return nil
+	return masterKey, nil
+}
+
+// migrateToSecret migrates an old direct-password-keyed database to the new secret model
+func (a *App) migrateToSecret(password string, salt []byte) ([]byte, error) {
+	logger.Info("Starting database migration to secret model")
+
+	// Old key was directly derived from password
+	oldKey := security.DeriveKey(password, salt)
+
+	// Open DB with old key
+	if err := a.container.InitializeWithKey(oldKey, a.container.Keystore.GetDBPath()); err != nil {
+		return nil, fmt.Errorf("failed to open database for migration: %w", err)
+	}
+
+	// Generate new random DB secret
+	dbSecret, err := security.GenerateDBSecret()
+	if err != nil {
+		return nil, err
+	}
+
+	// Re-key database to use the new random secret
+	if err := a.container.DB.Rekey(security.KeyToHex(dbSecret)); err != nil {
+		return nil, fmt.Errorf("failed to re-key database: %w", err)
+	}
+
+	// Generate and wrap new secrets
+	masterKey, err := security.GenerateRecoveryKey()
+	if err != nil {
+		return nil, err
+	}
+
+	// Wrap new secret with both user password and a new master key
+	masterWrappingKey := security.DeriveKey(masterKey, salt)
+	userWrapped, err := security.WrapSecret(dbSecret, oldKey)
+	if err != nil {
+		return nil, err
+	}
+	masterWrapped, err := security.WrapSecret(dbSecret, masterWrappingKey)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := a.container.Keystore.SaveWrappedSecrets(userWrapped, masterWrapped); err != nil {
+		return nil, err
+	}
+
+	// Re-initialize container with the new DB secret
+	if err := a.container.InitializeWithKey(dbSecret, a.container.Keystore.GetDBPath()); err != nil {
+		return nil, err
+	}
+
+	logger.Info("Migration to secret model completed successfully", slog.String("master_key", masterKey))
+	// Log master key to console during migration so user can see it once
+	fmt.Printf("\n\n!!! MASTER RECOVERY KEY (SAVE THIS): %s !!!\n\n", masterKey)
+
+	return dbSecret, nil
 }
 
 // Login authenticates an operator
@@ -213,11 +305,33 @@ func (a *App) Login(username, password string) error {
 		return errors.New("database not initialized")
 	}
 
-	// Derive key from password
-	key := security.DeriveKey(password, salt)
-	if err := a.container.InitializeWithKey(key, a.container.Keystore.GetDBPath()); err != nil {
-		logger.Error("Failed to initialize database", slog.String("error", err.Error()))
-		return err
+	var dbKey []byte
+
+	// Check if migration is needed
+	if !a.container.Keystore.SecretExists() {
+		dbKey, err = a.migrateToSecret(password, salt)
+		if err != nil {
+			logger.Error("Migration failed", slog.String("error", err.Error()))
+			return errors.New("неможливо оновити базу даних: " + err.Error())
+		}
+	} else {
+		// Normal flow: unwrap DB secret using password
+		userWrapped, err := a.container.Keystore.LoadUserWrappedSecret()
+		if err != nil {
+			return fmt.Errorf("failed to load user secret: %w", err)
+		}
+
+		operatorWrappingKey := security.DeriveKey(password, salt)
+		dbKey, err = security.UnwrapSecret(userWrapped, operatorWrappingKey)
+		if err != nil {
+			logger.Warn("Failed to unwrap secret (invalid password?)", slog.String("error", err.Error()))
+			return errors.New("неправильний пароль")
+		}
+
+		if err := a.container.InitializeWithKey(dbKey, a.container.Keystore.GetDBPath()); err != nil {
+			logger.Error("Failed to initialize database", slog.String("error", err.Error()))
+			return err
+		}
 	}
 
 	// Get operator
@@ -245,11 +359,10 @@ func (a *App) Login(username, password string) error {
 	a.container.SessionService.LastActivity = time.Now()
 	a.container.SessionService.Mu.Unlock()
 
-	// Log to audit (Business event) - handled here as it's a specific App action
-	// But commonly "Login" is a business event too.
+	// Log to audit
 	a.container.AuditLogService.LogAudit(a.ctx, &models.AuditLog{
 		OperatorID:  operator.ID,
-		ActionType:  "READ", // Or LOGIN if we had it, but READ/ACCESS is fine. Or custom "LOGIN"
+		ActionType:  "LOGIN",
 		TableName:   "operators",
 		RecordID:    operator.ID,
 		Description: "Operator logged in",
@@ -258,8 +371,78 @@ func (a *App) Login(username, password string) error {
 	// 5. Security events (технічні) - Successful login
 	logger.Info("Operator logged in successfully",
 		slog.String("username", username),
-		slog.String("ip", "local"), // Desktop app, usually local
+		slog.String("ip", "local"),
 	)
+
+	return nil
+}
+
+// RecoverByMasterKey resets the operator password using the master recovery key
+func (a *App) RecoverByMasterKey(masterKey, newPassword string) error {
+	logger.Info("Attempting password recovery with master key")
+
+	salt, err := a.container.Keystore.LoadSalt()
+	if err != nil {
+		return errors.New("database not initialized")
+	}
+
+	masterWrapped, err := a.container.Keystore.LoadMasterWrappedSecret()
+	if err != nil {
+		return errors.New("recovery secret not found")
+	}
+
+	// Unwrap DB secret using master key
+	masterWrappingKey := security.DeriveKey(masterKey, salt)
+	dbSecret, err := security.UnwrapSecret(masterWrapped, masterWrappingKey)
+	if err != nil {
+		logger.Warn("Failed recovery attempt: invalid master key")
+		return errors.New("неправильний майстер-ключ")
+	}
+
+	// Initialize DB to update the password hash
+	if err := a.container.InitializeWithKey(dbSecret, a.container.Keystore.GetDBPath()); err != nil {
+		return fmt.Errorf("failed to initialize DB during recovery: %w", err)
+	}
+
+	// Get the first operator
+	operators, err := a.container.OperatorRepo.GetAll(a.ctx)
+	if err != nil || len(operators) == 0 {
+		return errors.New("оператора не знайдено")
+	}
+	operator := operators[0]
+
+	// Update password hash
+	newHash, err := security.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	operator.PasswordHash = newHash
+
+	if err := a.container.OperatorRepo.Update(a.ctx, operator); err != nil {
+		return fmt.Errorf("failed to update operator password: %w", err)
+	}
+
+	// Re-wrap DB secret with the NEW password
+	newOperatorWrappingKey := security.DeriveKey(newPassword, salt)
+	newUserWrapped, err := security.WrapSecret(dbSecret, newOperatorWrappingKey)
+	if err != nil {
+		return err
+	}
+
+	// Save the new user wrapped secret (keep the same master secret)
+	if err := a.container.Keystore.SaveWrappedSecrets(newUserWrapped, masterWrapped); err != nil {
+		return err
+	}
+
+	logger.Info("Password recovered and reset successfully", slog.Int64("operator_id", operator.ID))
+
+	a.container.AuditLogService.LogAudit(a.ctx, &models.AuditLog{
+		OperatorID:  operator.ID,
+		ActionType:  "UPDATE",
+		TableName:   "operators",
+		RecordID:    operator.ID,
+		Description: "Password reset via master key",
+	})
 
 	return nil
 }

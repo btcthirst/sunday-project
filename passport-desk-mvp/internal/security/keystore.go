@@ -85,3 +85,27 @@ func (k *Keystore) EnsureDataDir() error {
 func (k *Keystore) GetDBPath() string {
 	return filepath.Join(k.dataDir, "passport_desk.db")
 }
+
+// SaveWrappedSecrets saves both user and master wrapped secrets
+func (k *Keystore) SaveWrappedSecrets(userSecret, masterSecret []byte) error {
+	if err := os.WriteFile(filepath.Join(k.dataDir, "db.secret.user"), userSecret, 0600); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(k.dataDir, "db.secret.master"), masterSecret, 0600)
+}
+
+// LoadUserWrappedSecret loads the secret wrapped with the user's password
+func (k *Keystore) LoadUserWrappedSecret() ([]byte, error) {
+	return os.ReadFile(filepath.Join(k.dataDir, "db.secret.user"))
+}
+
+// LoadMasterWrappedSecret loads the secret wrapped with the master key
+func (k *Keystore) LoadMasterWrappedSecret() ([]byte, error) {
+	return os.ReadFile(filepath.Join(k.dataDir, "db.secret.master"))
+}
+
+// SecretExists checks if the secret file exists
+func (k *Keystore) SecretExists() bool {
+	_, err := os.Stat(filepath.Join(k.dataDir, "db.secret.user"))
+	return err == nil
+}

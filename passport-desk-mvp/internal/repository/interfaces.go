@@ -31,6 +31,8 @@ type OperatorRepositoryInterface interface {
 	Create(ctx context.Context, op *models.Operator) error
 	GetByUsername(ctx context.Context, username string) (*models.Operator, error)
 	Exists(ctx context.Context) (bool, error)
+	GetAll(ctx context.Context) ([]*models.Operator, error)
+	Update(ctx context.Context, op *models.Operator) error
 }
 
 type RegistrationRepositoryInterface interface {

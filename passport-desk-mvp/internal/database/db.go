@@ -54,3 +54,9 @@ func (d *Database) Close() error {
 func (d *Database) DB() *sql.DB {
 	return d.db
 }
+
+// Rekey changes the database encryption key
+func (d *Database) Rekey(newKey string) error {
+	_, err := d.db.Exec(fmt.Sprintf("PRAGMA rekey = x'%s'", newKey))
+	return err
+}

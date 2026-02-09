@@ -98,6 +98,10 @@ export function Logout() {
   return window['go']['main']['App']['Logout']();
 }
 
+export function RecoverByMasterKey(arg1, arg2) {
+  return window['go']['main']['App']['RecoverByMasterKey'](arg1, arg2);
+}
+
 export function RemoveFamilyMember(arg1, arg2) {
   return window['go']['main']['App']['RemoveFamilyMember'](arg1, arg2);
 }
