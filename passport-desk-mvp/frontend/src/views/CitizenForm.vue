@@ -29,7 +29,7 @@
         label-placement="top"
         size="medium"
       >
-        <n-tabs type="line" animated v-model:value="activeTab">
+        <n-tabs type="line" animated v-model:value="activeTab" display-directive="show">
           <n-tab-pane name="personal" tab="Особисті дані">
             <n-grid :x-gap="24" :y-gap="24" :cols="2">
               <n-gi>
@@ -87,8 +87,8 @@
                   <n-input 
                     v-model:value="formValue.passport_series" 
                     placeholder="АА" 
-                    @input="v => formValue.passport_series = v.toUpperCase()"
-                    maxlength="2"
+                    @input="v => { if (v.length <= 2) formValue.passport_series = v.toUpperCase(); else formValue.passport_series = v }"
+                    :maxlength="formValue.passport_series && formValue.passport_series.length > 2 ? 100 : 2"
                   />
                 </n-form-item>
               </n-gi>
@@ -413,6 +413,13 @@ onMounted(async () => {
         email: citizen.email,
         notes: citizen.notes
       })
+
+      // Alert if data looks encrypted (failed decryption on backend)
+      const looksEncrypted = (val: string) => val && val.length > 20 && !val.includes(' ') && val.endsWith('=')
+      if (looksEncrypted(citizen.passport_series) || looksEncrypted(citizen.passport_number) || looksEncrypted(citizen.tax_number)) {
+         message.error('Схоже, дані в базі зашифровані некоректно або ключ не збігається. Будьте уважні при збереженні!', { duration: 10000 })
+      }
+
       formValue.value = input
       
       // Load family members

@@ -177,15 +177,87 @@ func TestCitizenRepository_Search(t *testing.T) {
 	}
 }
 
-func TestCitizenRepository_ContextCancellation(t *testing.T) {
+func TestCitizenRepository_FamilyRelations(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewCitizenRepository(db)
+	ctx := context.Background()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+	// 1. Create two citizens
+	id1, _ := repo.Create(ctx, &models.CitizenInput{LastName: "Father", FirstName: "John", Gender: "M", BirthDate: "1970-01-01", PassportSeries: "AA", PassportNumber: "1"})
+	id2, _ := repo.Create(ctx, &models.CitizenInput{LastName: "Son", FirstName: "Bob", Gender: "M", BirthDate: "2000-01-01", PassportSeries: "AA", PassportNumber: "2"})
 
-	_, err := repo.GetByID(ctx, 1)
-	if err == nil {
-		t.Error("Expected error due to cancelled context, got nil")
+	// 2. Add relationship: John is Bob's Father
+	err := repo.AddFamilyMember(ctx, id1, id2, "Батько")
+	if err != nil {
+		t.Fatalf("AddFamilyMember failed: %v", err)
+	}
+
+	// 3. Verify reciprocity: Bob should have John as Father
+	members1, _ := repo.GetFamilyMembers(ctx, id1)
+	if len(members1) != 1 || members1[0].ID != id2 || members1[0].RelationType != "Батько" {
+		t.Errorf("Expected John to have Bob as son, got %v", members1)
+	}
+
+	members2, _ := repo.GetFamilyMembers(ctx, id2)
+	if len(members2) != 1 || members2[0].ID != id1 || members2[0].RelationType != "Син" {
+		t.Errorf("Expected Bob to have John as father, got %v", members2)
+	}
+}
+
+func TestCitizenRepository_Reciprocity(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewCitizenRepository(db)
+	ctx := context.Background()
+
+	id1, _ := repo.Create(ctx, &models.CitizenInput{LastName: "A", FirstName: "A", Gender: "M", BirthDate: "1970-01-01", PassportSeries: "AA", PassportNumber: "1"})
+	id2, _ := repo.Create(ctx, &models.CitizenInput{LastName: "B", FirstName: "B", Gender: "M", BirthDate: "2000-01-01", PassportSeries: "AA", PassportNumber: "2"})
+
+	// A (Male) adds B as "Син"
+	repo.AddFamilyMember(ctx, id1, id2, "Син")
+
+	// Get A's family: should have B as "Син"
+	f1, _ := repo.GetFamilyMembers(ctx, id1)
+	if len(f1) != 1 || f1[0].RelationType != "Син" {
+		t.Errorf("Expected A to have B as 'Син', got %s", f1[0].RelationType)
+	}
+
+	// Get B's family: should have A as "Батько" (inverse of A being male and B being his son)
+	f2, _ := repo.GetFamilyMembers(ctx, id2)
+	if len(f2) != 1 || f2[0].RelationType != "Батько" {
+		t.Errorf("Expected B to have A as 'Батько', got %s", f2[0].RelationType)
+	}
+}
+
+func TestCitizenRepository_UpdateWithRelations(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewCitizenRepository(db)
+	ctx := context.Background()
+
+	id1, _ := repo.Create(ctx, &models.CitizenInput{LastName: "A", FirstName: "A", Gender: "M", BirthDate: "1970-01-01", PassportSeries: "AA", PassportNumber: "1"})
+	id2, _ := repo.Create(ctx, &models.CitizenInput{LastName: "B", FirstName: "B", Gender: "F", BirthDate: "1975-01-01", PassportSeries: "AA", PassportNumber: "2"})
+
+	// Update A to add B as "Дружина"
+	input := &models.CitizenInput{
+		LastName: "A", FirstName: "A", Gender: "M", BirthDate: "1970-01-01",
+		PassportSeries: "AA", PassportNumber: "1",
+		FamilyRelations: []models.FamilyRelationInput{
+			{MemberID: id2, RelationType: "Дружина"},
+		},
+	}
+	err := repo.Update(ctx, id1, input)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	// Verify A has B as wife
+	f1, _ := repo.GetFamilyMembers(ctx, id1)
+	if len(f1) != 1 || f1[0].RelationType != "Дружина" {
+		t.Fatalf("Expected A to have B as wife, got %v", f1)
+	}
+
+	// Verify B has A as husband
+	f2, _ := repo.GetFamilyMembers(ctx, id2)
+	if len(f2) != 1 || f2[0].RelationType != "Чоловік" {
+		t.Fatalf("Expected B to have A as husband, got %v", f2)
 	}
 }

@@ -87,6 +87,10 @@ const columns: DataTableColumns<models.CitizenOutput> = [
     title: 'ПІБ',
     key: 'full_name',
     sorter: 'default',
+    ellipsis: {
+      tooltip: true
+    },
+    minWidth: 200
   },
   {
     title: 'Дата народження',
@@ -100,6 +104,9 @@ const columns: DataTableColumns<models.CitizenOutput> = [
     title: 'Адреса реєстрації',
     key: 'active_address',
     width: 250,
+    ellipsis: {
+      tooltip: true
+    },
     render(row: models.CitizenOutput) {
       return (row as any).active_address || '-'
     }
@@ -108,14 +115,20 @@ const columns: DataTableColumns<models.CitizenOutput> = [
     title: 'Паспорт',
     key: 'passport_masked',
     width: 180,
+    ellipsis: {
+      tooltip: true
+    },
     render(row: models.CitizenOutput) {
-      return h(NTag, { type: 'info', bordered: false }, { default: () => row.passport_masked })
+      return h(NTag, { type: 'info', bordered: false, style: { maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' } }, { default: () => row.passport_masked })
     }
   },
   {
     title: 'Стать',
     key: 'gender_display',
-    width: 100
+    width: 100,
+    ellipsis: {
+      tooltip: true
+    }
   },
   {
     title: 'Дії',
@@ -174,6 +187,7 @@ async function loadData(page = 1) {
         pagination.page = result.page
         pagination.itemCount = result.total
         pagination.pageCount = result.total_pages
+        console.log(citizens.value)
       }
     }
   } catch (e: any) {

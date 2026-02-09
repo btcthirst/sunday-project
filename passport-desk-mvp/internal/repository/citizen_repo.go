@@ -156,6 +156,12 @@ func (r *CitizenRepository) Update(ctx context.Context, id int64, citizen *model
 		return fmt.Errorf("context error: %w", err)
 	}
 
+	tx, err := r.db.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	const query = `
         UPDATE citizens SET
             last_name = ?,
@@ -175,7 +181,7 @@ func (r *CitizenRepository) Update(ctx context.Context, id int64, citizen *model
         WHERE id = ?
     `
 
-	result, err := r.db.DB().ExecContext(ctx, query,
+	result, err := tx.ExecContext(ctx, query,
 		citizen.LastName,
 		citizen.FirstName,
 		citizen.MiddleName,
@@ -206,7 +212,25 @@ func (r *CitizenRepository) Update(ctx context.Context, id int64, citizen *model
 		return fmt.Errorf("citizen %d not found: %w", id, ErrNotFound)
 	}
 
-	return nil
+	// Update family relations: clear and re-add
+	// Reciprocal logic: delete all where this citizen is participant
+	if _, err := tx.ExecContext(ctx, "DELETE FROM family_relations WHERE citizen_id = ? OR member_id = ?", id, id); err != nil {
+		return fmt.Errorf("clear family relations: %w", err)
+	}
+
+	for _, rel := range citizen.FamilyRelations {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO family_relations (citizen_id, member_id, relation_type) VALUES (?, ?, ?)",
+			id, rel.MemberID, rel.RelationType); err != nil {
+			return fmt.Errorf("add family relation: %w", err)
+		}
+		// Reciprocal entry
+		if _, err := tx.ExecContext(ctx, "INSERT INTO family_relations (citizen_id, member_id, relation_type) VALUES (?, ?, ?)",
+			rel.MemberID, id, getInverseRelation(rel.RelationType, citizen.Gender)); err != nil {
+			return fmt.Errorf("add inverse family relation: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // SoftDelete marks a citizen as deleted
@@ -615,28 +639,56 @@ func (r *CitizenRepository) GetAll(ctx context.Context) ([]*models.CitizenOutput
 	return citizens, nil
 }
 
-// AddFamilyMember adds a relationship between two citizens
+// AddFamilyMember adds a relationship between two citizens (reciprocal)
 func (r *CitizenRepository) AddFamilyMember(ctx context.Context, citizenID, memberID int64, relationType string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context error: %w", err)
 	}
-	_, err := r.db.DB().ExecContext(ctx, "INSERT INTO family_relations (citizen_id, member_id, relation_type) VALUES (?, ?, ?)", citizenID, memberID, relationType)
+
+	// We need gender of citizenID for reciprocity
+	var gender string
+	err := r.db.DB().QueryRowContext(ctx, "SELECT gender FROM citizens WHERE id = ?", citizenID).Scan(&gender)
 	if err != nil {
-		return fmt.Errorf("add family member: %w", err)
+		return fmt.Errorf("get gender for reciprocity: %w", err)
 	}
-	return nil
+
+	tx, err := r.db.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO family_relations (citizen_id, member_id, relation_type) VALUES (?, ?, ?)",
+		citizenID, memberID, relationType); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO family_relations (citizen_id, member_id, relation_type) VALUES (?, ?, ?)",
+		memberID, citizenID, getInverseRelation(relationType, gender)); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
-// RemoveFamilyMember removes a relationship
+// RemoveFamilyMember removes a relationship (reciprocal)
 func (r *CitizenRepository) RemoveFamilyMember(ctx context.Context, citizenID, memberID int64) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context error: %w", err)
 	}
-	_, err := r.db.DB().ExecContext(ctx, "DELETE FROM family_relations WHERE citizen_id = ? AND member_id = ?", citizenID, memberID)
+
+	tx, err := r.db.DB().BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("remove family member: %w", err)
+		return err
 	}
-	return nil
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM family_relations WHERE (citizen_id = ? AND member_id = ?) OR (citizen_id = ? AND member_id = ?)",
+		citizenID, memberID, memberID, citizenID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // GetFamilyMembers returns all family members for a citizen

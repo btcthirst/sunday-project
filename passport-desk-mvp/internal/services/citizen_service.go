@@ -91,29 +91,20 @@ func (s *CitizenService) GetByID(ctx context.Context, id int64) (*models.Citizen
 		return nil, err
 	}
 
-	if d, err := s.crypto.Decrypt(citizen.Phone); err == nil {
-		citizen.Phone = d
-	} else {
-		log.Warn("Failed to decrypt phone", slog.String("error", err.Error()))
+	// Decrypt and compute fields using unified helpers
+	decrypted, err := s.decryptSensitiveFieldsWithLog(ctx, *citizen)
+	if err != nil {
+		// If decryption fails, we still return the citizen to show error/hash,
+		// but computeFields might fail or show garbage.
+		// Actually, decryptSensitiveFieldsWithLog now returns error on failure.
+		log.Error("Decryption failed in GetByID", slog.String("error", err.Error()))
+		// We can choose to return the encrypted one for troubleshooting or fail.
+		// Better to fail to prevent further corruption.
+		return nil, fmt.Errorf("decryption failed: %w", err)
 	}
 
-	if d, err := s.crypto.Decrypt(citizen.Email); err == nil {
-		citizen.Email = d
-	} else {
-		log.Warn("Failed to decrypt email", slog.String("error", err.Error()))
-	}
-
-	if d, err := s.crypto.Decrypt(citizen.TaxNumber); err == nil {
-		citizen.TaxNumber = d
-	} else {
-		log.Warn("Failed to decrypt tax number", slog.String("error", err.Error()))
-	}
-
-	if d, err := s.crypto.Decrypt(citizen.PassportNumber); err == nil {
-		citizen.PassportNumber = d
-	} else {
-		log.Warn("Failed to decrypt passport number", slog.String("error", err.Error()))
-	}
+	decrypted.BirthDate = normalizeDate(decrypted.BirthDate)
+	s.computeFields(ctx, &decrypted)
 
 	// AUDIT LOG: Business event - View Citizen
 	if err := s.auditLog.LogAudit(ctx, &models.AuditLog{
@@ -121,12 +112,12 @@ func (s *CitizenService) GetByID(ctx context.Context, id int64) (*models.Citizen
 		ActionType:  "READ",
 		TableName:   "citizens",
 		RecordID:    id,
-		Description: fmt.Sprintf("Viewed citizen: %s", citizen.FullName),
+		Description: fmt.Sprintf("Viewed citizen: %s", decrypted.FullName),
 	}); err != nil {
 		log.Warn("Audit log failed", slog.String("error", err.Error()))
 	}
 
-	return citizen, nil
+	return &decrypted, nil
 }
 
 func (s *CitizenService) Update(ctx context.Context, id int64, input *models.CitizenInput) (*models.CitizenOutput, error) {
@@ -141,7 +132,9 @@ func (s *CitizenService) Update(ctx context.Context, id int64, input *models.Cit
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	encryptedInput, err := s.encryptSensitiveFields(input)
+	// Copy input to avoid modifying the original data
+	inputCopy := *input
+	encryptedInput, err := s.encryptSensitiveFields(&inputCopy)
 	if err != nil {
 		log.Error("Encryption failed", slog.String("error", err.Error()))
 		return nil, fmt.Errorf("encryption failed: %w", err)
@@ -149,6 +142,7 @@ func (s *CitizenService) Update(ctx context.Context, id int64, input *models.Cit
 
 	encryptedInput.BirthDate = normalizeDate(encryptedInput.BirthDate)
 
+	start := time.Now()
 	// Update in DB
 	if err := s.repo.Update(ctx, id, encryptedInput); err != nil {
 		log.Error("Update failed", slog.String("error", err.Error()), slog.String("table", "citizens"))
@@ -157,7 +151,7 @@ func (s *CitizenService) Update(ctx context.Context, id int64, input *models.Cit
 
 	log.Info("Citizen updated successfully",
 		slog.Int64("id", id),
-		slog.Duration("duration", time.Since(time.Now())),
+		slog.Duration("duration", time.Since(start)),
 	)
 
 	// AUDIT LOG: Business event
@@ -170,7 +164,7 @@ func (s *CitizenService) Update(ctx context.Context, id int64, input *models.Cit
 	}); err != nil {
 		log.Warn("Audit log failed", slog.String("error", err.Error()))
 	}
-	return s.repo.GetByID(ctx, id)
+	return s.GetByID(ctx, id)
 }
 
 func (s *CitizenService) Delete(ctx context.Context, id int64) error {
@@ -392,17 +386,45 @@ func (s *CitizenService) GetFamilyMembers(ctx context.Context, citizenID int64) 
 			return nil, err
 		}
 		familyMember.CitizenOutput.BirthDate = normalizeDate(familyMember.CitizenOutput.BirthDate)
+		s.computeFields(ctx, &familyMember.CitizenOutput)
 		decryptedFamilyMembers[i] = familyMember
 	}
 	return decryptedFamilyMembers, nil
 }
 
 func (s *CitizenService) RemoveFamilyMember(ctx context.Context, citizenID, memberID int64) error {
-	return s.repo.RemoveFamilyMember(ctx, citizenID, memberID)
+	log := logger.FromContext(ctx).With(
+		slog.String("service", "citizen"),
+		slog.String("method", "RemoveFamilyMember"),
+		slog.Int64("id1", citizenID),
+		slog.Int64("id2", memberID),
+	)
+
+	if err := s.repo.RemoveFamilyMember(ctx, citizenID, memberID); err != nil {
+		log.Error("Failed to remove family relationship", slog.String("error", err.Error()))
+		return err
+	}
+
+	log.Info("Family relationship removed successfully (reciprocal)")
+	return nil
 }
 
 func (s *CitizenService) AddFamilyMember(ctx context.Context, citizenID, memberID int64, relationType string) error {
-	return s.repo.AddFamilyMember(ctx, citizenID, memberID, relationType)
+	log := logger.FromContext(ctx).With(
+		slog.String("service", "citizen"),
+		slog.String("method", "AddFamilyMember"),
+		slog.Int64("citizen_id", citizenID),
+		slog.Int64("member_id", memberID),
+		slog.String("type", relationType),
+	)
+
+	if err := s.repo.AddFamilyMember(ctx, citizenID, memberID, relationType); err != nil {
+		log.Error("Failed to add family relationship", slog.String("error", err.Error()))
+		return err
+	}
+
+	log.Info("Family relationship added successfully (reciprocal)")
+	return nil
 }
 
 // maskPassport masks passport number for display
@@ -437,30 +459,44 @@ func genderToUkrainian(gender string) string {
 }
 
 func (s *CitizenService) encryptSensitiveFields(input *models.CitizenInput) (*models.CitizenInput, error) {
-	// Encrypt sensitive fields
-	encPassportSeries, err := s.crypto.Encrypt(input.PassportSeries)
+	// Helper to encrypt only if not already encrypted
+	encrypt := func(val, name string) (string, error) {
+		if val == "" {
+			return "", nil
+		}
+
+		// Safeguard: if it looks like a hash (long, ends with =), skip encryption
+		// to avoid double-encryption if corrupted data reached the form.
+		if len(val) > 20 && strings.HasSuffix(val, "=") && !strings.Contains(val, " ") {
+			slog.Warn("Skipping encryption for already encrypted-looking field", slog.String("field", name))
+			return val, nil
+		}
+
+		slog.Debug("Encrypting field", slog.String("field", name), slog.Int("len", len(val)))
+		return s.crypto.Encrypt(val)
+	}
+
+	result := *input // Shallow copy
+
+	var err error
+	result.PassportSeries, err = encrypt(input.PassportSeries, "PassportSeries")
 	if err != nil {
 		return nil, err
 	}
-	encPassportNumber, err := s.crypto.Encrypt(input.PassportNumber)
+	result.PassportNumber, err = encrypt(input.PassportNumber, "PassportNumber")
 	if err != nil {
 		return nil, err
 	}
-	encTaxNumber, err := s.crypto.Encrypt(input.TaxNumber)
+	result.TaxNumber, err = encrypt(input.TaxNumber, "TaxNumber")
 	if err != nil {
 		return nil, err
 	}
-	encPhone, err := s.crypto.Encrypt(input.Phone)
+	result.Phone, err = encrypt(input.Phone, "Phone")
 	if err != nil {
 		return nil, err
 	}
 
-	input.PassportSeries = encPassportSeries
-	input.PassportNumber = encPassportNumber
-	input.TaxNumber = encTaxNumber
-	input.Phone = encPhone
-
-	return input, nil
+	return &result, nil
 }
 
 func (s *CitizenService) decryptSensitiveFields(input models.CitizenOutput) (models.CitizenOutput, error) {
@@ -471,28 +507,74 @@ func (s *CitizenService) decryptSensitiveFields(input models.CitizenOutput) (mod
 func (s *CitizenService) decryptSensitiveFieldsWithLog(ctx context.Context, input models.CitizenOutput) (models.CitizenOutput, error) {
 	log := logger.FromContext(ctx)
 
-	if d, err := s.crypto.Decrypt(input.PassportSeries); err == nil {
-		input.PassportSeries = d
-	} else {
-		log.Warn("Failed to decrypt passport series", slog.String("error", err.Error()))
+	// Helper to decrypt multiple times if needed (to recover from double-encryption bugs)
+	deepDecrypt := func(val, name string) (string, error) {
+		if val == "" {
+			return "", nil
+		}
+
+		current := val
+		layers := 0
+		for layers < 3 {
+			// Try to decrypt
+			decrypted, err := s.crypto.Decrypt(current)
+			if err != nil {
+				// If first layer fails, it might be already plaintext or corrupted
+				if layers == 0 {
+					return val, nil // Assume plaintext
+				}
+				// If subsequent layer fails, return what we have so far
+				return current, nil
+			}
+
+			current = decrypted
+			layers++
+
+			// If the result no longer looks like a hash, we are done
+			if len(current) < 20 || !strings.HasSuffix(current, "=") || strings.Contains(current, " ") {
+				break
+			}
+			log.Warn("Detected multi-layered encryption, trying another layer", slog.String("field", name), slog.Int("layer", layers))
+		}
+
+		if layers > 1 {
+			log.Info("Successfully recovered multi-layered encrypted data", slog.String("field", name), slog.Int("layers", layers))
+		}
+		return current, nil
 	}
 
-	if d, err := s.crypto.Decrypt(input.PassportNumber); err == nil {
-		input.PassportNumber = d
-	} else {
-		log.Warn("Failed to decrypt passport number", slog.String("error", err.Error()))
+	var err error
+	if input.PassportSeries != "" {
+		input.PassportSeries, err = deepDecrypt(input.PassportSeries, "PassportSeries")
+		if err != nil {
+			return input, err
+		}
+	}
+	if input.PassportNumber != "" {
+		input.PassportNumber, err = deepDecrypt(input.PassportNumber, "PassportNumber")
+		if err != nil {
+			return input, err
+		}
+	}
+	if input.TaxNumber != "" {
+		input.TaxNumber, err = deepDecrypt(input.TaxNumber, "TaxNumber")
+		if err != nil {
+			return input, err
+		}
+	}
+	if input.Phone != "" {
+		input.Phone, err = deepDecrypt(input.Phone, "Phone")
+		if err != nil {
+			return input, err
+		}
 	}
 
-	if d, err := s.crypto.Decrypt(input.TaxNumber); err == nil {
-		input.TaxNumber = d
-	} else {
-		log.Warn("Failed to decrypt tax number", slog.String("error", err.Error()))
-	}
-
-	if d, err := s.crypto.Decrypt(input.Phone); err == nil {
-		input.Phone = d
-	} else {
-		log.Warn("Failed to decrypt phone", slog.String("error", err.Error()))
+	// BirthDate should NEVER be encrypted, but if it is, let's try to recover it for the user
+	if len(input.BirthDate) > 20 && strings.HasSuffix(input.BirthDate, "=") {
+		log.Warn("BirthDate looks encrypted! Attempting recovery...", slog.String("val", input.BirthDate))
+		if d, err := deepDecrypt(input.BirthDate, "BirthDate"); err == nil {
+			input.BirthDate = d
+		}
 	}
 
 	return input, nil
@@ -504,15 +586,41 @@ func (s *CitizenService) computeFields(ctx context.Context, input *models.Citize
 	// Compute fields
 	var createdAt, updatedAt time.Time
 	var err error
-	createdAt, err = time.Parse("2006-01-02 15:04:05", input.CreatedAt)
-	if err != nil {
+
+	// Try multiple layouts for parsing timestamps
+	layouts := []string{
+		"2006-01-02 15:04:05",
+		time.RFC3339,
+		"2006-01-02T15:04:05Z",
+	}
+
+	parseTime := func(val string) (time.Time, error) {
+		if val == "" {
+			return time.Time{}, nil
+		}
+		for _, layout := range layouts {
+			if t, err := time.Parse(layout, val); err == nil {
+				return t, nil
+			}
+		}
+		return time.Parse("2006-01-02 15:04:05", val) // Final attempt for error reporting
+	}
+
+	createdAt, err = parseTime(input.CreatedAt)
+	if err != nil && input.CreatedAt != "" {
 		log.Warn("Failed to parse CreatedAt", slog.String("value", input.CreatedAt), slog.String("error", err.Error()))
 	}
 
-	updatedAt, err = time.Parse("2006-01-02 15:04:05", input.UpdatedAt)
-	if err != nil {
+	updatedAt, err = parseTime(input.UpdatedAt)
+	if err != nil && input.UpdatedAt != "" {
 		log.Warn("Failed to parse UpdatedAt", slog.String("value", input.UpdatedAt), slog.String("error", err.Error()))
 	}
+
+	// Ensure names don't contain hashes
+	if strings.Contains(input.LastName, "=") && len(input.LastName) > 20 {
+		log.Error("LastName contains hash!", slog.String("val", input.LastName))
+	}
+
 	input.FullName = strings.TrimSpace(input.LastName + " " + input.FirstName + " " + input.MiddleName)
 	input.PassportMasked = maskPassport(input.PassportSeries, input.PassportNumber)
 	input.TaxNumberMasked = maskTaxNumber(input.TaxNumber)

@@ -496,7 +496,15 @@ func (a *App) ListCitizens(page, limit int, includeDeleted bool) (*models.Citize
 	}
 	a.container.SessionService.UpdateActivity()
 
-	return a.container.CitizenService.List(a.ctx, page, limit, includeDeleted)
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	offset := (page - 1) * limit
+
+	return a.container.CitizenService.List(a.ctx, offset, limit, includeDeleted)
 }
 
 // --- Registration Methods ---
