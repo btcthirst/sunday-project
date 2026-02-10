@@ -1,5 +1,5 @@
 <template>
-  <n-config-provider :theme="darkTheme" :locale="ukUA" :date-locale="dateUkUA">
+  <n-config-provider :theme="isDark ? darkTheme : null" :locale="ukUA" :date-locale="dateUkUA">
     <n-message-provider>
       <n-dialog-provider>
         <n-notification-provider>
@@ -15,8 +15,10 @@ import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { darkTheme, ukUA, dateUkUA } from 'naive-ui'
 import { WindowShow, EventsOn } from '../wailsjs/runtime'
+import { useTheme } from './composables/useTheme'
 
 const router = useRouter()
+const { isDark } = useTheme()
 
 onMounted(() => {
   EventsOn('session-locked', () => {

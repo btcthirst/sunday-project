@@ -46,6 +46,10 @@ export function GetAuditLogs(arg1) {
   return window['go']['main']['App']['GetAuditLogs'](arg1);
 }
 
+export function GetBackupsList() {
+  return window['go']['main']['App']['GetBackupsList']();
+}
+
 export function GetCitizen(arg1) {
   return window['go']['main']['App']['GetCitizen'](arg1);
 }
@@ -118,6 +122,10 @@ export function SetupInitialOperator(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetupInitialOperator'](arg1, arg2, arg3);
 }
 
+export function TriggerManualBackup() {
+  return window['go']['main']['App']['TriggerManualBackup']();
+}
+
 export function Unlock(arg1) {
   return window['go']['main']['App']['Unlock'](arg1);
 }
@@ -128,4 +136,12 @@ export function UpdateActivity() {
 
 export function UpdateCitizen(arg1, arg2) {
   return window['go']['main']['App']['UpdateCitizen'](arg1, arg2);
+}
+
+export function UpdateOperatorPassword(arg1, arg2) {
+  return window['go']['main']['App']['UpdateOperatorPassword'](arg1, arg2);
+}
+
+export function UpdateOperatorProfile(arg1) {
+  return window['go']['main']['App']['UpdateOperatorProfile'](arg1);
 }

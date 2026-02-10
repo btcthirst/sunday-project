@@ -180,6 +180,8 @@ async function handleUserMenuSelect(key: string) {
   if (key === 'logout') {
     await Logout()
     router.push('/login')
+  } else if (key === 'settings') {
+    router.push({ name: 'Settings' })
   }
 }
 

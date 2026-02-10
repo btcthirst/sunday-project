@@ -24,6 +24,8 @@ export function GenerateFamilyStatusCertificate(arg1:models.FamilyCertificateOpt
 
 export function GetAuditLogs(arg1:number):Promise<Array<models.AuditLogOutput>>;
 
+export function GetBackupsList():Promise<Array<string>>;
+
 export function GetCitizen(arg1:number):Promise<models.CitizenOutput>;
 
 export function GetCurrentOperator():Promise<models.Operator>;
@@ -60,8 +62,14 @@ export function SearchCitizens(arg1:string,arg2:string):Promise<Array<models.Cit
 
 export function SetupInitialOperator(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function TriggerManualBackup():Promise<void>;
+
 export function Unlock(arg1:string):Promise<void>;
 
 export function UpdateActivity():Promise<void>;
 
 export function UpdateCitizen(arg1:number,arg2:models.CitizenInput):Promise<models.CitizenOutput>;
+
+export function UpdateOperatorPassword(arg1:string,arg2:string):Promise<void>;
+
+export function UpdateOperatorProfile(arg1:string):Promise<void>;
