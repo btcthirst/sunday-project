@@ -1033,3 +1033,113 @@ func (a *App) ListRegistrations(search string, isActive *bool, page, limit int) 
 	a.container.SessionService.UpdateActivity()
 	return a.container.RegistrationService.ListAll(a.ctx, search, isActive, page, limit)
 }
+
+// --- Settings & System Methods ---
+
+// UpdateOperatorProfile updates the current operator's full name
+func (a *App) UpdateOperatorProfile(fullName string) error {
+	if !a.container.SessionService.IsAuthenticated() {
+		return errors.New("unauthorized")
+	}
+	a.container.SessionService.UpdateActivity()
+
+	if err := a.container.OperatorService.UpdateProfile(a.ctx, fullName); err != nil {
+		logger.Error("UpdateOperatorProfile failed", slog.String("error", err.Error()))
+		return err
+	}
+
+	return nil
+}
+
+// UpdateOperatorPassword changes the operator's password and re-wraps the DB secret
+func (a *App) UpdateOperatorPassword(oldPassword, newPassword string) error {
+	if !a.container.SessionService.IsAuthenticated() {
+		return errors.New("unauthorized")
+	}
+	a.container.SessionService.UpdateActivity()
+
+	a.container.SessionService.Mu.RLock()
+	operator := a.container.SessionService.CurrentOperator
+	dbSecret := a.container.SessionService.EncryptionKey
+	a.container.SessionService.Mu.RUnlock()
+
+	if operator == nil || len(dbSecret) == 0 {
+		return errors.New("session state invalid")
+	}
+
+	// 1. Verify old password
+	if !security.VerifyPassword(operator.PasswordHash, oldPassword) {
+		return errors.New("неправильний старий пароль")
+	}
+
+	// 2. Hash new password
+	newHash, err := security.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+
+	// 3. Load salt
+	salt, err := a.container.Keystore.LoadSalt()
+	if err != nil {
+		return err
+	}
+
+	// 4. Re-wrap DB secret with NEW password
+	newWrappingKey := security.DeriveKey(newPassword, salt)
+	newUserWrapped, err := security.WrapSecret(dbSecret, newWrappingKey)
+	if err != nil {
+		return err
+	}
+
+	// 5. Save the new wrapped secret (keep existing master wrapped secret)
+	masterWrapped, err := a.container.Keystore.LoadMasterWrappedSecret()
+	if err != nil {
+		return err
+	}
+
+	if err := a.container.Keystore.SaveWrappedSecrets(newUserWrapped, masterWrapped); err != nil {
+		return err
+	}
+
+	// 6. Update operator in DB
+	operator.PasswordHash = newHash
+	if err := a.container.OperatorService.UpdatePassword(a.ctx, operator); err != nil {
+		return err
+	}
+
+	logger.Info("Password updated successfully", slog.Int64("operator_id", operator.ID))
+
+	a.container.AuditLogService.LogAudit(a.ctx, &models.AuditLog{
+		OperatorID:  operator.ID,
+		ActionType:  "UPDATE",
+		TableName:   "operators",
+		RecordID:    operator.ID,
+		Description: "Password changed by operator",
+	})
+
+	return nil
+}
+
+// GetBackupsList returns a list of available backups
+func (a *App) GetBackupsList() ([]string, error) {
+	if !a.container.SessionService.IsAuthenticated() {
+		return nil, errors.New("unauthorized")
+	}
+	return a.container.BackupService.GetBackups()
+}
+
+// TriggerManualBackup runs a backup manually
+func (a *App) TriggerManualBackup() error {
+	if !a.container.SessionService.IsAuthenticated() {
+		return errors.New("unauthorized")
+	}
+
+	a.container.AuditLogService.LogAudit(a.ctx, &models.AuditLog{
+		OperatorID:  a.container.SessionService.CurrentOperator.ID,
+		ActionType:  "CREATE",
+		TableName:   "backups",
+		Description: "Manual backup triggered",
+	})
+
+	return a.container.BackupService.RunBackup()
+}

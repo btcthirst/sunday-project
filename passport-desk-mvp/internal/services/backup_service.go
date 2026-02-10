@@ -89,6 +89,28 @@ func (s *BackupService) CleanupOldBackups() error {
 	return nil
 }
 
+// GetBackups returns a list of backup timestamps (folder names)
+func (s *BackupService) GetBackups() ([]string, error) {
+	entries, err := os.ReadDir(s.backupDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+
+	var backups []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			backups = append(backups, entry.Name())
+		}
+	}
+
+	// Sort newest first
+	sort.Sort(sort.Reverse(sort.StringSlice(backups)))
+	return backups, nil
+}
+
 func (s *BackupService) copyFile(src, dst string) error {
 	sourceFile, err := os.Open(src)
 	if err != nil {

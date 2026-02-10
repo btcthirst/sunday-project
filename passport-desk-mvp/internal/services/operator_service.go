@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"passport-desk-mvp/internal/logger"
 	"passport-desk-mvp/internal/models"
 	"passport-desk-mvp/internal/repository"
@@ -48,4 +49,27 @@ func (a *OperatorService) GetOperatorByUsername(ctx context.Context, username st
 
 func (a *OperatorService) OperatorExists(ctx context.Context) (bool, error) {
 	return a.operatorRepo.Exists(ctx)
+}
+
+// UpdateProfile updates the current operator's full name
+func (a *OperatorService) UpdateProfile(ctx context.Context, fullName string) error {
+	a.sessionService.Mu.Lock()
+	defer a.sessionService.Mu.Unlock()
+
+	if a.sessionService.CurrentOperator == nil {
+		return errors.New("not logged in")
+	}
+
+	operator := a.sessionService.CurrentOperator
+	operator.FullName = fullName
+
+	if err := a.operatorRepo.Update(ctx, operator); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (a *OperatorService) UpdatePassword(ctx context.Context, op *models.Operator) error {
+	return a.operatorRepo.Update(ctx, op)
 }
